@@ -12,6 +12,9 @@ node_modules/
 dist/
 build/
 
+# ========== ChromaDB ==========
+chroma_data/
+
 # ========== Environment variables ==========
 .env
 .env.local

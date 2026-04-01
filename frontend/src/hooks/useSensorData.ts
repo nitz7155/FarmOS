@@ -23,11 +23,12 @@ export function useSensorData() {
 
   const fetchAll = useCallback(async () => {
     try {
+      const opts = { credentials: 'include' as RequestCredentials };
       const [latestRes, historyRes, alertsRes, irrigationsRes] = await Promise.all([
-        fetch(`${API_BASE}/sensors/latest`),
-        fetch(`${API_BASE}/sensors/history?limit=100`),
-        fetch(`${API_BASE}/sensors/alerts`),
-        fetch(`${API_BASE}/irrigation/events`),
+        fetch(`${API_BASE}/sensors/latest`, opts),
+        fetch(`${API_BASE}/sensors/history?limit=100`, opts),
+        fetch(`${API_BASE}/sensors/alerts`, opts),
+        fetch(`${API_BASE}/irrigation/events`, opts),
       ]);
 
       const latest = await latestRes.json();

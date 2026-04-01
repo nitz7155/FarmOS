@@ -12,6 +12,7 @@ export default function FindPasswordPage() {
   const [email, setEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetToken, setResetToken] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleVerify = async (e: React.FormEvent) => {
@@ -31,6 +32,8 @@ export default function FindPasswordPage() {
         const err = await res.json();
         throw new Error(err.detail || '본인 확인에 실패했습니다.');
       }
+      const data = await res.json();
+      setResetToken(data.reset_token);
       toast.success('본인 확인이 완료되었습니다.');
       setStep('reset');
     } catch (err) {
@@ -55,7 +58,7 @@ export default function FindPasswordPage() {
       const res = await fetch(`${API_BASE}/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId, new_password: newPassword }),
+        body: JSON.stringify({ user_id: userId, new_password: newPassword, reset_token: resetToken }),
       });
       if (!res.ok) {
         const err = await res.json();

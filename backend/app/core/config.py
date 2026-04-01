@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # ChromaDB (벡터 데이터베이스)
+    CHROMA_DB_PATH: str = "./chroma_data"
+
+    # IoT 디바이스 API Key (ESP8266 인증용)
+    IOT_API_KEY: str = "farmos-iot-default-key"
+
     # Sensor thresholds
     SOIL_MOISTURE_LOW: float = 55.0
     SOIL_MOISTURE_HIGH: float = 70.0

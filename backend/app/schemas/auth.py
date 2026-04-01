@@ -30,6 +30,7 @@ class FindPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     user_id: str
     new_password: str = Field(min_length=4)
+    reset_token: str
 
 
 class UserResponse(BaseModel):

@@ -29,6 +29,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         setUser({ user_id: data.user_id, name: data.name });
       } else {
+        // 인증 실패 시 만료/무효 쿠키 정리
+        await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
         setUser(null);
       }
     } catch {

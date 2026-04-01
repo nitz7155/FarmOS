@@ -5,7 +5,12 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 from jose import JWTError, jwt
 
-SECRET_KEY = "farmos-secret-key-change-in-production"
+import os
+import secrets
+
+# 환경변수 JWT_SECRET_KEY가 있으면 고정 키 사용 (프로덕션),
+# 없으면 서버 시작마다 랜덤 생성 → 재시작 시 기존 세션 자동 무효화 (개발)
+SECRET_KEY = os.getenv("JWT_SECRET_KEY") or secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 

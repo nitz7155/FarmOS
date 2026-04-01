@@ -1,3 +1,7 @@
+import secrets
+import time
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +18,31 @@ from app.schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 COOKIE_KEY = "farmos_token"
+
+# 비밀번호 재설정용 일회용 토큰 저장소 (인메모리, 5분 만료)
+_reset_tokens: dict[str, dict] = {}  # {token: {"user_id": str, "expires": float}}
+RESET_TOKEN_EXPIRE_SECONDS = 300  # 5분
+
+# 로그인 브루트포스 방어 — IP별 시도 횟수 제한
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+MAX_LOGIN_ATTEMPTS = 5    # 최대 시도 횟수
+LOGIN_WINDOW_SECONDS = 60  # 시간 윈도우 (1분)
+
+
+def _check_rate_limit(client_ip: str):
+    """IP별 로그인 시도 횟수를 확인하고 초과 시 차단."""
+    now = time.time()
+    # 윈도우 밖의 오래된 기록 제거
+    _login_attempts[client_ip] = [
+        t for t in _login_attempts[client_ip]
+        if now - t < LOGIN_WINDOW_SECONDS
+    ]
+    if len(_login_attempts[client_ip]) >= MAX_LOGIN_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="로그인 시도가 너무 많습니다. 1분 후 다시 시도해주세요.",
+        )
+    _login_attempts[client_ip].append(now)
 
 
 def _set_token_cookie(response: Response, token: str):
@@ -46,11 +75,17 @@ async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login")
-async def login(req: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
-    """로그인 — HttpOnly 쿠키로 JWT 설정."""
+async def login(req: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """로그인 — HttpOnly 쿠키로 JWT 설정 (IP별 시도 횟수 제한)."""
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(client_ip)
+
     user = await user_store.authenticate(db, req.user_id, req.password)
     if not user:
         raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다.")
+
+    # 로그인 성공 시 해당 IP의 시도 기록 초기화
+    _login_attempts.pop(client_ip, None)
     token = create_access_token({"sub": user.id, "name": user.name})
     _set_token_cookie(response, token)
     return {"user_id": user.id, "name": user.name}
@@ -87,17 +122,45 @@ async def find_id(req: FindIdRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/find-password")
 async def find_password(req: FindPasswordRequest, db: AsyncSession = Depends(get_db)):
-    """비밀번호 찾기 — 아이디 + 이메일 확인 후 재설정 허용."""
+    """비밀번호 찾기 — 아이디 + 이메일 확인 후 일회용 재설정 토큰 발급."""
     user = await user_store.find_by_id_and_email(db, req.user_id, req.email)
     if not user:
         raise HTTPException(404, "일치하는 회원 정보를 찾을 수 없습니다.")
-    return {"verified": True, "user_id": req.user_id, "message": "본인 확인이 완료되었습니다. 새 비밀번호를 설정하세요."}
+
+    # 만료된 토큰 정리
+    now = time.time()
+    expired = [k for k, v in _reset_tokens.items() if v["expires"] < now]
+    for k in expired:
+        del _reset_tokens[k]
+
+    # 일회용 재설정 토큰 발급
+    reset_token = secrets.token_urlsafe(32)
+    _reset_tokens[reset_token] = {
+        "user_id": req.user_id,
+        "expires": now + RESET_TOKEN_EXPIRE_SECONDS,
+    }
+    return {
+        "verified": True,
+        "reset_token": reset_token,
+        "message": "본인 확인이 완료되었습니다. 새 비밀번호를 설정하세요.",
+    }
 
 
 @router.post("/reset-password")
 async def reset_password(req: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
-    """비밀번호 재설정."""
+    """비밀번호 재설정 — 일회용 토큰 검증 후 변경."""
+    token_data = _reset_tokens.get(req.reset_token)
+    if not token_data or token_data["expires"] < time.time():
+        _reset_tokens.pop(req.reset_token, None)
+        raise HTTPException(400, "재설정 토큰이 유효하지 않거나 만료되었습니다.")
+
+    if token_data["user_id"] != req.user_id:
+        raise HTTPException(400, "잘못된 요청입니다.")
+
     ok = await user_store.reset_password(db, req.user_id, req.new_password)
     if not ok:
         raise HTTPException(404, "사용자를 찾을 수 없습니다.")
+
+    # 토큰 소멸 (일회용)
+    del _reset_tokens[req.reset_token]
     return {"message": "비밀번호가 성공적으로 변경되었습니다."}
