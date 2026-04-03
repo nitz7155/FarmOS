@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.api import auth, health, irrigation, knowledge, sensors
 from app.core.config import settings
-from app.core.database import init_db, async_session
+from app.core.database import async_session, close_db, init_db
 from app.core.security import hash_password
 from app.models.user import User  # noqa: F401 — Base.metadata 등록용
 
@@ -61,6 +61,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     await seed_users()
     yield
+    await close_db()
 
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)

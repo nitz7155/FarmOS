@@ -7,6 +7,10 @@ class Settings(BaseSettings):
 
     # Database (PostgreSQL)
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/farmos"
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_RECYCLE: int = 1800
 
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
