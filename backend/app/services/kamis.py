@@ -33,7 +33,8 @@ class KamisService:
 
     async def _get(self, action: str, extra: dict[str, str] | None = None) -> dict:
         params = {"action": action, **self._common_params(), **(extra or {})}
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        async with httpx.AsyncClient(timeout=self.TIMEOUT, headers=headers) as client:
             resp = await client.get(self.BASE_URL, params=params)
             resp.raise_for_status()
             return resp.json()
