@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { SensorReading, IrrigationEvent, SensorAlert } from '@/types';
 
 const API_BASE = 'http://iot.lilpa.moe/api/v1';
-const POLL_INTERVAL = 3000; // 3초 간격 폴링
+const POLL_INTERVAL = 30000; // 30초 간격 폴링
+const DISCONNECT_THRESHOLD = 5; // 연속 5회 실패 시 연결 끊김 판정
 
 interface SensorData {
   latest: SensorReading | null;
@@ -21,6 +22,8 @@ export function useSensorData() {
     connected: false,
   });
 
+  const failCount = useRef(0);
+
   const fetchAll = useCallback(async () => {
     try {
       const [latestRes, historyRes, alertsRes, irrigationsRes] = await Promise.all([
@@ -35,6 +38,8 @@ export function useSensorData() {
       const alerts = await alertsRes.json();
       const irrigations = await irrigationsRes.json();
 
+      failCount.current = 0;
+
       setData({
         latest: latest.timestamp ? latest : null,
         history,
@@ -43,7 +48,11 @@ export function useSensorData() {
         connected: true,
       });
     } catch {
-      setData(prev => ({ ...prev, connected: false }));
+      failCount.current += 1;
+
+      if (failCount.current >= DISCONNECT_THRESHOLD) {
+        setData(prev => ({ ...prev, connected: false }));
+      }
     }
   }, []);
 

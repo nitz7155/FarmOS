@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, memo } from 'react';
-import { MdWaterDrop, MdThermostat, MdOpacity, MdWbSunny, MdWarning, MdWifiOff } from 'react-icons/md';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { useState, useEffect, useMemo, memo, useCallback } from 'react';
+import { MdWaterDrop, MdThermostat, MdOpacity, MdWbSunny, MdWarning, MdWifiOff, MdClose } from 'react-icons/md';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Cell } from 'recharts';
 import { useSensorData } from '@/hooks/useSensorData';
 
 function SensorCard({ icon: Icon, label, value, unit, color, threshold, warning, disabled }: {
@@ -108,10 +108,170 @@ const IoTCharts = memo(function IoTCharts({ chartData }: { chartData: ChartData 
   );
 });
 
+interface IrrigationEvent {
+  id: string;
+  triggeredAt: string;
+  reason: string;
+  valveAction: '열림' | '닫힘';
+  duration: number;
+  autoTriggered: boolean;
+}
+
+interface IrrigationModalProps {
+  irrigations: IrrigationEvent[];
+  onClose: () => void;
+}
+
+function IrrigationModal({ irrigations, onClose }: IrrigationModalProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
+  // ESC 키로 닫기
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  // 모달 열릴 때 스크롤 방지
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
+  const chartData = irrigations.map((e) => ({
+    label: new Date(e.triggeredAt).toLocaleString('ko-KR', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+    duration: e.duration > 0 ? e.duration : 1,
+    valveAction: e.valveAction,
+    reason: e.reason,
+  }));
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 헤더 */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h2 className="text-lg font-bold text-gray-900">관수 이력 상세</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            aria-label="닫기"
+          >
+            <MdClose className="text-xl" />
+          </button>
+        </div>
+
+        {/* 그래프 영역 */}
+        <div className="px-6 pt-5 pb-2">
+          <p className="text-sm font-medium text-gray-600 mb-3">관수 지속 시간 (분)</p>
+          {mounted && chartData.length > 0 ? (
+            <div className="h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 40 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 10, fill: '#9CA3AF' }}
+                    angle={-35}
+                    textAnchor="end"
+                    interval={0}
+                  />
+                  <YAxis tick={{ fontSize: 11, fill: '#9CA3AF' }} allowDecimals={false} />
+                  <Tooltip
+                    formatter={(value: number, _name: string, props: any) => [
+                      `${value}분`,
+                      `밸브 ${props.payload.valveAction}`,
+                    ]}
+                    labelFormatter={(label: string) => label}
+                    contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  />
+                  <Bar dataKey="duration" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                    {chartData.map((entry, index) => (
+                      <Cell
+                        key={index}
+                        fill={entry.valveAction === '열림' ? '#3B82F6' : '#9CA3AF'}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-[200px] flex items-center justify-center text-gray-300 text-sm">
+              데이터 없음
+            </div>
+          )}
+          <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-blue-500 inline-block" />
+              밸브 열림
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-sm bg-gray-400 inline-block" />
+              밸브 닫힘
+            </span>
+          </div>
+        </div>
+
+        {/* 리스트 영역 (스크롤) */}
+        <div className="px-6 pb-6 overflow-y-auto flex-1 mt-2">
+          <p className="text-sm font-medium text-gray-600 mb-2">전체 이력 ({irrigations.length}건)</p>
+          <div className="space-y-2">
+            {irrigations.map((e) => (
+              <div key={e.id} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50">
+                <span className={`w-3 h-3 rounded-full flex-shrink-0 ${e.valveAction === '열림' ? 'bg-blue-500' : 'bg-gray-400'}`} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{e.reason}</p>
+                  <p className="text-xs text-gray-400">
+                    {new Date(e.triggeredAt).toLocaleString('ko-KR', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    {e.duration > 0 && ` · ${e.duration}분`}
+                    {e.autoTriggered && <span className="ml-1 text-[#2D5F2D]">· 자동</span>}
+                  </p>
+                </div>
+                <span className={`badge text-xs flex-shrink-0 ${e.valveAction === '열림' ? 'badge-info' : 'badge-success'}`}>
+                  밸브 {e.valveAction}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const INITIAL_COUNT = 3;
+const INCREMENT = 3;
+
 export default function IoTDashboardPage() {
   const { latest, history, alerts, irrigations, connected } = useSensorData();
   const hasData = !!latest;
   const inactive = !connected || !hasData;
+
+  const [irrigationModalOpen, setIrrigationModalOpen] = useState(false);
+  const [alertCount, setAlertCount] = useState(INITIAL_COUNT);
+
+  const handleOpenIrrigationModal = useCallback(() => setIrrigationModalOpen(true), []);
+  const handleCloseIrrigationModal = useCallback(() => setIrrigationModalOpen(false), []);
 
   const chartData = useMemo(() =>
     history.map(r => ({
@@ -193,23 +353,35 @@ export default function IoTDashboardPage() {
           {irrigations.length === 0 ? (
             <p className="text-gray-400 text-sm text-center py-4">관수 이력이 없습니다</p>
           ) : (
-            <div className="space-y-2">
-              {irrigations.map((e: any) => (
-                <div key={e.id} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50">
-                  <span className={`w-3 h-3 rounded-full ${e.valveAction === '열림' ? 'bg-blue-500' : 'bg-gray-400'}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">{e.reason}</p>
-                    <p className="text-xs text-gray-400">
-                      {new Date(e.triggeredAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      {e.duration > 0 && ` · ${e.duration}분`}
-                    </p>
+            <>
+              <div className="space-y-2">
+                {irrigations.slice(0, INITIAL_COUNT).map((e: any) => (
+                  <div key={e.id} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50">
+                    <span className={`w-3 h-3 rounded-full ${e.valveAction === '열림' ? 'bg-blue-500' : 'bg-gray-400'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{e.reason}</p>
+                      <p className="text-xs text-gray-400">
+                        {new Date(e.triggeredAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {e.duration > 0 && ` · ${e.duration}분`}
+                      </p>
+                    </div>
+                    <span className={`badge text-xs ${e.valveAction === '열림' ? 'badge-info' : 'badge-success'}`}>
+                      밸브 {e.valveAction}
+                    </span>
                   </div>
-                  <span className={`badge text-xs ${e.valveAction === '열림' ? 'badge-info' : 'badge-success'}`}>
-                    밸브 {e.valveAction}
-                  </span>
+                ))}
+              </div>
+              {irrigations.length > INITIAL_COUNT && (
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={handleOpenIrrigationModal}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[#2D5F2D] text-[#2D5F2D] hover:bg-[#2D5F2D] hover:text-white transition-colors"
+                  >
+                    더보기 ({irrigations.length - INITIAL_COUNT}건 더)
+                  </button>
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
         </div>
 
@@ -219,31 +391,58 @@ export default function IoTDashboardPage() {
           {alerts.length === 0 ? (
             <p className="text-gray-400 text-sm text-center py-4">알림이 없습니다</p>
           ) : (
-            <div className="space-y-2">
-              {alerts.map((a: any) => (
-                <div key={a.id} className={`flex items-center gap-3 p-3 rounded-xl ${
-                  a.severity === '위험' || a.severity === '경고' ? 'bg-red-50' :
-                  a.severity === '주의' ? 'bg-yellow-50' : 'bg-blue-50'
-                }`}>
-                  <span className={`badge text-xs ${
-                    a.severity === '위험' || a.severity === '경고' ? 'badge-danger' :
-                    a.severity === '주의' ? 'badge-warning' : 'badge-info'
+            <>
+              <div className="space-y-2">
+                {alerts.slice(0, alertCount).map((a: any) => (
+                  <div key={a.id} className={`flex items-center gap-3 p-3 rounded-xl ${
+                    a.severity === '위험' || a.severity === '경고' ? 'bg-red-50' :
+                    a.severity === '주의' ? 'bg-yellow-50' : 'bg-blue-50'
                   }`}>
-                    {a.severity}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-800">{a.message}</p>
-                    <p className="text-xs text-gray-400">
-                      {new Date(a.timestamp).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </p>
+                    <span className={`badge text-xs ${
+                      a.severity === '위험' || a.severity === '경고' ? 'badge-danger' :
+                      a.severity === '주의' ? 'badge-warning' : 'badge-info'
+                    }`}>
+                      {a.severity}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-800">{a.message}</p>
+                      <p className="text-xs text-gray-400">
+                        {new Date(a.timestamp).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    {a.resolved && <span className="text-xs text-green-600">해결됨</span>}
                   </div>
-                  {a.resolved && <span className="text-xs text-green-600">해결됨</span>}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-3">
+                {alertCount < alerts.length && (
+                  <button
+                    onClick={() => setAlertCount(c => c + INCREMENT)}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-[#2D5F2D] text-[#2D5F2D] hover:bg-[#2D5F2D] hover:text-white transition-colors"
+                  >
+                    더보기 ({Math.min(INCREMENT, alerts.length - alertCount)}건)
+                  </button>
+                )}
+                {alertCount > INITIAL_COUNT && (
+                  <button
+                    onClick={() => setAlertCount(INITIAL_COUNT)}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-100 transition-colors"
+                  >
+                    접기
+                  </button>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
+
+      {irrigationModalOpen && (
+        <IrrigationModal
+          irrigations={irrigations as IrrigationEvent[]}
+          onClose={handleCloseIrrigationModal}
+        />
+      )}
     </div>
   );
 }
