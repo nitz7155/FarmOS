@@ -27,34 +27,37 @@ def _estimate_soil_moisture(temperature: float, humidity: float, light_intensity
     """온도·대기 습도·조도를 기반으로 토양 습도를 추정한다.
 
     원리:
-      - 대기 습도 ↑ → 증발 억제 + 강우 가능성 → 토양 습도 ↑
-      - 온도 ↑     → 증발량 증가              → 토양 습도 ↓
-      - 조도 ↑     → 일사량 증가 → 증발 촉진  → 토양 습도 ↓
+      - 토양은 기본적으로 수분을 보유 (기본값 55%)
+      - 대기 습도 ↑ → 증발 억제 → 토양 습도 ↑
+      - 온도 ↑     → 증발 증가 → 토양 습도 ↓
+      - 조도 ↑     → 일사량 증가 → 토양 습도 ↓
       - 시간 관성   → 토양 습도는 급변하지 않으므로 이전 값과 블렌딩
     """
     global _prev_soil_moisture
 
-    # 1) 대기 습도를 기반값으로 출발 (양의 상관)
-    base = humidity * 0.75
+    # 1) 토양 기본 보유 수분
+    base = 55.0
 
-    # 2) 온도 보정: 25℃ 기준, 1℃당 ±0.5%
-    temp_effect = (temperature - 25) * 0.5
+    # 2) 대기 습도 보정: 50% 기준, ±0.3%p per 1%
+    humidity_effect = (humidity - 50) * 0.3
 
-    # 3) 조도 보정: 0~100% 범위, 높을수록 토양 건조
-    light_effect = (light_intensity / 100) * 3
+    # 3) 온도 보정: 20℃ 기준, 1℃당 -0.4%
+    temp_effect = (temperature - 20) * 0.4
 
-    # 4) 추정값 산출
-    estimated = base - temp_effect - light_effect
+    # 4) 조도 보정: 높을수록 건조
+    light_effect = (light_intensity / 100) * 2
 
-    # 5) 자연스러운 노이즈 (±2%)
-    noise = random.uniform(-2.0, 2.0)
-    estimated += noise
+    # 5) 추정값 산출
+    estimated = base + humidity_effect - temp_effect - light_effect
 
-    # 6) 시간 관성: 이전 값 70% + 새 추정값 30% → 부드러운 변화
+    # 6) 자연스러운 노이즈 (±2%)
+    estimated += random.uniform(-2.0, 2.0)
+
+    # 7) 시간 관성: 이전 값 70% + 새 추정값 30%
     if _prev_soil_moisture is not None:
         estimated = _prev_soil_moisture * 0.7 + estimated * 0.3
 
-    # 7) 현실적 범위 제한 (20~85%)
+    # 8) 현실적 범위 제한 (20~85%)
     estimated = max(20.0, min(85.0, estimated))
     _prev_soil_moisture = estimated
 
