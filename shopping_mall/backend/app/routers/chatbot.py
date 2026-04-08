@@ -45,12 +45,12 @@ def _get_current_user_id(
     # Try to get authenticated user from JWT token
     farmos_user = get_farmos_user_optional(request)
     if farmos_user:
-        # Find or create user in shop database
-        user = db.query(User).filter(User.name == farmos_user.name).first()
+        # Find or create user in shop database using farmos_user_id
+        user = db.query(User).filter(User.user_id == farmos_user.user_id).first()
         if not user:
             user = User(
+                user_id=farmos_user.user_id,
                 name=farmos_user.name,
-                email=f"{farmos_user.user_id}@farmos.kr",
             )
             db.add(user)
             db.commit()
