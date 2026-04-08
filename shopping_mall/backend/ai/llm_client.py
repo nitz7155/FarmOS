@@ -7,15 +7,22 @@ import httpx
 logger = logging.getLogger(__name__)
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "llama3"
+DEFAULT_MODEL = "qwen2.5:7b"
+DEFAULT_MODEL_EMBED = "all-minilm"
 
 
 class LLMClient:
     """Async client for Ollama LLM API with fallback responses."""
 
-    def __init__(self, base_url: str = OLLAMA_BASE_URL, model: str = DEFAULT_MODEL):
+    def __init__(
+        self,
+        base_url: str = OLLAMA_BASE_URL,
+        model: str = DEFAULT_MODEL,
+        embed_model: str = DEFAULT_MODEL_EMBED,
+    ):
         self.base_url = base_url
         self.model = model
+        self.embed_model = embed_model
 
     async def generate(self, prompt: str, system: str = "") -> str:
         """Generate text from a prompt. Falls back to placeholder on error."""
@@ -51,11 +58,11 @@ class LLMClient:
             return "[AI 서비스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.]"
 
     async def embed(self, text: str) -> list[float]:
-        """Get text embedding. Returns empty list on error."""
+        """Get text embedding using embedding model. Returns empty list on error."""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 payload = {
-                    "model": self.model,
+                    "model": self.embed_model,
                     "input": text,
                 }
                 resp = await client.post(f"{self.base_url}/api/embed", json=payload)

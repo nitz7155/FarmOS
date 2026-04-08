@@ -59,6 +59,7 @@ class ProductDetail(BaseModel):
     images: List[str] = []
     options: List[Any] = []
     stock: int = 0
+    restock_date: Optional[datetime] = None
     rating: float = 0.0
     review_count: int = 0
     sales_count: int = 0

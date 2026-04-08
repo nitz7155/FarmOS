@@ -12,6 +12,7 @@ class Shipment(Base):
     carrier: Mapped[str] = mapped_column(String(20), nullable=False)
     tracking_number: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="registered")
+    expected_arrival: Mapped[datetime | None] = mapped_column(nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(nullable=True)
     tracking_history: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -1,0 +1,125 @@
+# CodeRabbit Configuration for FarmOS Team
+# 팀 전체가 사용하는 통합 코드 리뷰 설정
+
+language: ko-KR
+
+# PR 리뷰 기본 설정
+reviews:
+  review_status: true                    # PR 체크 표시
+  request_changes_workflow: true         # 변경 요청 가능
+  high_level_summary: true               # 상위 요약
+  poem: false                            # 시 제외
+  collapse_walkthrough: false
+
+  # 무시할 파일/디렉토리
+  path_filters:
+    - "!**/.venv/**"
+    - "!**/__pycache__/**"
+    - "!**/node_modules/**"
+    - "!**/.git/**"
+    - "!**/*.lock"
+    - "!.env*"
+    - "!*.pyc"
+    - "!*.pyo"
+    - "!.DS_Store"
+    - "!*.min.js"
+    - "!*.min.css"
+
+  auto_review:
+    enabled: true
+    drafts: false                        # 드래프트 PR 제외
+    base_branches:
+      - main
+      - develop
+      - dev
+
+  # 경로별 커스텀 지시사항
+  path_instructions:
+    - path: "backend/**"
+      instructions: |
+        Python 백엔드 코드 리뷰:
+        - SQLAlchemy ORM 패턴 (원본 SQL 지양)
+        - 비동기 코드 일관성 (async/await)
+        - 입력값 검증 (Pydantic)
+        - RAG/임베딩 최적화
+
+    - path: "frontend/**"
+      instructions: |
+        React/TypeScript 코드 리뷰:
+        - 함수형 컴포넌트, hooks 사용
+        - strict mode, 타입 안전성
+        - key prop 필수 (lists)
+        - XSS 취약점 확인
+
+# 리뷰 톤 및 지시사항
+tone_instructions: |
+  ## FarmOS 팀 코드 리뷰 가이드
+
+  다음 관점에서 한국어로 상세히 리뷰해주세요.
+
+  ### 1. 보안 (필수)
+  - SQL injection: ORM 쿼리 사용 확인, 원본 SQL 지양
+  - 입력값 검증: Pydantic 스키마 활용
+  - 민감한 정보 노출: API key, 비밀번호 등
+  - CORS, 인증 설정
+
+  ### 2. 성능 (필수)
+  - SQLAlchemy N+1 쿼리: joinedload() 활용
+  - DB 인덱스 고려
+  - RAG 성능: 임베딩 캐싱, 배치 처리
+  - 무한 루프/블로킹 작업
+
+  ### 3. 코드 스타일 (필수)
+  - snake_case, PascalCase 준수
+  - 100자 라인 길이 (ruff 설정)
+  - 타입 힌팅 권장
+  - 명확한 변수/함수명
+
+  ### 4. 아키텍처 (권장)
+  - FastAPI 라우터/스키마 분리
+  - 의존성 주입 (Depends)
+  - 서비스 계층 활용
+  - config.py에서 설정 관리
+
+  ### 5. 테스트 (권장)
+  - 주요 기능 테스트 작성
+  - 통합 테스트 (DB 포함)
+  - Mock 사용 적절성
+
+  ### 6. FarmOS 특화 (도메인 중심)
+  - RAG 시스템: 임베딩 모델, 청킹, 검색 전략
+  - ChromaDB: 컬렉션 관리, 메타데이터
+  - IoT: 센서 데이터 처리, 정규화
+  - 농산물: 도메인 로직 일관성
+
+  ### 피드백 작성 규칙
+  - 구체적인 개선 방안 제시
+  - 코드 예시 포함
+  - 문제가 없으면 칭찬
+  - 비판적이지만 건설적으로
+
+# 코드 가이드라인 및 기준
+# 자세한 내용은 CODERABBIT_GUIDELINES.md 참고
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "**/*.py"
+      - "**/*.ts"
+      - "**/*.tsx"
+
+# 리뷰 프로필 (크기별 깊이)
+profile:
+  review_complexity:
+    small:      # 최대 100줄
+      depth: basic
+      focus: [security, style]
+
+    medium:     # 100-500줄
+      depth: detailed
+      focus: [security, performance, quality]
+
+    large:      # 500줄 이상
+      depth: comprehensive
+      focus: [security, performance, architecture, tests]
+      request_changes: true

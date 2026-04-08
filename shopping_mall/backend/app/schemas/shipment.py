@@ -15,6 +15,7 @@ class ShipmentCreate(BaseModel):
     order_id: int
     carrier: str
     tracking_number: str
+    expected_arrival: Optional[datetime] = None
 
 
 class ShipmentResponse(BaseModel):
@@ -25,6 +26,7 @@ class ShipmentResponse(BaseModel):
     carrier: str
     tracking_number: str
     status: str
+    expected_arrival: Optional[datetime] = None
     last_checked_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     tracking_history: Optional[str] = None

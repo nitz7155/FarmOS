@@ -1,34 +1,150 @@
 """Chatbot router."""
+from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models.chat_log import ChatLog
+from app.models.chat_session import ChatSession
 from app.schemas.chatlog import ChatQuestion, ChatAnswer, ChatLogResponse, ChatRating
+from app.schemas.chat_session import ChatSessionCreate, ChatSessionResponse, ChatSessionMessages
 from app.services.ai_chatbot import ChatbotService
-from ai.llm_client import LLMClient
-from ai.rag import RAGService
+from app.farmos_auth import get_farmos_user_optional, FarmOSUser
+from app.models.user import User
 
 router = APIRouter(prefix="/api/chatbot", tags=["chatbot"])
 
+_chatbot_service_instance: Optional[ChatbotService] = None
+
+
+def set_chatbot_service(service: ChatbotService) -> None:
+    """앱 시작 시 lifespan에서 싱글턴 서비스를 주입합니다."""
+    global _chatbot_service_instance
+    _chatbot_service_instance = service
+
 
 def _get_chatbot_service() -> ChatbotService:
-    llm = LLMClient()
-    rag = RAGService(llm_client=llm)
-    return ChatbotService(llm_client=llm, rag_service=rag)
+    if _chatbot_service_instance is None:
+        raise RuntimeError("Chatbot service not initialized. Check app startup.")
+    return _chatbot_service_instance
+
+
+def _get_current_user_id(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> int:
+    """Extract user ID from FarmOS JWT token (authenticated) or X-User-Id header (guest).
+
+    For authenticated users: validates JWT and returns their shop user ID.
+    For guests: returns temporary guest ID from X-User-Id header.
+    Raises 401 if neither is available.
+    """
+    # Try to get authenticated user from JWT token
+    farmos_user = get_farmos_user_optional(request)
+    if farmos_user:
+        # Find or create user in shop database using login_user_id
+        user = db.query(User).filter(User.user_id == farmos_user.user_id).first()
+        if not user:
+            user = User(
+                user_id=farmos_user.user_id,
+                name=farmos_user.name,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        return user.id
+
+    # Fallback: allow guest with X-User-Id header
+    x_user_id_str = request.headers.get("X-User-Id")
+    if not x_user_id_str:
+        raise HTTPException(
+            status_code=401,
+            detail="인증이 필요합니다 (FarmOS 로그인 또는 X-User-Id 헤더)",
+        )
+
+    try:
+        return int(x_user_id_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id 헤더는 정수여야 합니다",
+        )
 
 
 @router.post("/ask", response_model=ChatAnswer)
-async def ask_question(body: ChatQuestion, db: Session = Depends(get_db)):
+async def ask_question(
+    body: ChatQuestion,
+    authenticated_user_id: int = Depends(_get_current_user_id),
+    db: Session = Depends(get_db)
+):
     """Submit a question to the AI chatbot."""
+    # Guest request: no session validation needed
+    if body.session_id is None:
+        service = _get_chatbot_service()
+        history = [h.model_dump() for h in body.history] if body.history else []
+        result = await service.answer(
+            db,
+            question=body.question,
+            user_id=None,
+            history=history,
+            session_id=None,
+        )
+        return ChatAnswer(
+            answer=result["answer"],
+            intent=result["intent"],
+            escalated=result["escalated"],
+        )
+
+    # Authenticated request: validate that the session exists and belongs to the authenticated user
+    session = db.query(ChatSession).filter(ChatSession.id == body.session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    if session.user_id != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Cannot access other users' sessions")
+
     service = _get_chatbot_service()
-    result = await service.answer(db, question=body.question, user_id=body.user_id)
+    history = [h.model_dump() for h in body.history] if body.history else []
+    result = await service.answer(
+        db,
+        question=body.question,
+        user_id=authenticated_user_id,
+        history=history,
+        session_id=body.session_id,
+    )
     return ChatAnswer(
         answer=result["answer"],
         intent=result["intent"],
         escalated=result["escalated"],
     )
+
+
+@router.get("/history")
+def get_user_history(
+    user_id: int = Query(...),
+    authenticated_user_id: int = Depends(_get_current_user_id),
+    limit: int = Query(20, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    """회원의 최근 대화 내역을 messages 형태로 반환."""
+    if user_id != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Cannot access other users' chat history")
+    logs = (
+        db.query(ChatLog)
+        .filter(ChatLog.user_id == user_id)
+        .order_by(ChatLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    # Reverse to get chronological order (newest first, but each message pair in order)
+    logs = list(reversed(logs))
+    messages = []
+    for log in logs:
+        messages.append({"role": "user", "text": log.question})
+        messages.append({"role": "bot", "text": log.answer, "intent": log.intent, "escalated": log.escalated})
+    return messages
 
 
 @router.get("/logs", response_model=List[ChatLogResponse])
@@ -64,9 +180,264 @@ def rate_chat_log(log_id: int, body: ChatRating, db: Session = Depends(get_db)):
     log = db.query(ChatLog).filter(ChatLog.id == log_id).first()
     if not log:
         raise HTTPException(status_code=404, detail="Chat log not found")
-    if body.rating < 1 or body.rating > 5:
-        raise HTTPException(status_code=400, detail="Rating must be between 1 and 5")
     log.rating = body.rating
     db.commit()
     db.refresh(log)
     return log
+
+
+# ===== Session Management Endpoints =====
+
+
+@router.post("/sessions", response_model=ChatSessionResponse)
+def create_session(body: ChatSessionCreate, authenticated_user_id: int = Depends(_get_current_user_id), db: Session = Depends(get_db)):
+    """Create a new chat session for a user. Only one active session per user allowed."""
+    # Validate that user can only create sessions for themselves
+    if body.user_id != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Cannot create session for other users")
+
+    # Check if user already has an active session
+    existing_active = (
+        db.query(ChatSession)
+        .filter(ChatSession.user_id == body.user_id, ChatSession.status == "active")
+        .first()
+    )
+
+    # Close existing active session and create new session in a single transaction
+    try:
+        # If there's an existing active session, close it
+        if existing_active:
+            existing_active.status = "closed"
+            existing_active.closed_at = datetime.now(timezone.utc)
+
+        # Create new session
+        session = ChatSession(user_id=body.user_id, status="active")
+        db.add(session)
+        db.flush()
+
+        # Add welcome message to chat log
+        welcome_log = ChatLog(
+            user_id=body.user_id,
+            session_id=session.id,
+            intent="greeting",
+            question="채팅 시작",
+            answer="안녕하세요! FarmOS 마켓 고객지원입니다.\n무엇이든 물어보세요 😊",
+            escalated=False,
+        )
+        db.add(welcome_log)
+        db.commit()
+    except IntegrityError:
+        # Race condition: another request created active session simultaneously
+        # Rollback and fetch the existing active session instead
+        db.rollback()
+        existing_session = (
+            db.query(ChatSession)
+            .filter(ChatSession.user_id == body.user_id, ChatSession.status == "active")
+            .first()
+        )
+        if existing_session:
+            session = existing_session
+        else:
+            # Fallback: shouldn't happen, but retry once more
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create or retrieve active chat session",
+            )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create chat session: {str(e)}")
+
+    db.refresh(session)
+
+    # Build response with preview (same logic as list_sessions)
+    session_response = ChatSessionResponse.model_validate(session)
+
+    # Get message count
+    message_count = db.query(ChatLog).filter(ChatLog.session_id == session.id).count()
+    session_response.message_count = message_count
+
+    # Get the last message for preview (should be the welcome message)
+    last_log = (
+        db.query(ChatLog)
+        .filter(ChatLog.session_id == session.id)
+        .order_by(ChatLog.created_at.desc())
+        .first()
+    )
+    if last_log:
+        session_response.message_preview = last_log.answer
+
+    return session_response
+
+
+@router.get("/sessions", response_model=List[ChatSessionResponse])
+def list_sessions(
+    user_id: int = Query(...),
+    authenticated_user_id: int = Depends(_get_current_user_id),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """List all chat sessions for a user, ordered by most recent first."""
+    if user_id != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Cannot access other users' sessions")
+
+    sessions = (
+        db.query(ChatSession)
+        .filter(ChatSession.user_id == user_id)
+        .order_by(ChatSession.updated_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    results = []
+    for session in sessions:
+        session_dict = ChatSessionResponse.model_validate(session)
+        # Count messages in this session
+        message_count = db.query(ChatLog).filter(ChatLog.session_id == session.id).count()
+        session_dict.message_count = message_count
+
+        # Get the last message for preview
+        last_log = (
+            db.query(ChatLog)
+            .filter(ChatLog.session_id == session.id)
+            .order_by(ChatLog.created_at.desc())
+            .first()
+        )
+        if last_log:
+            # Use the bot's answer as preview (more recent in the conversation)
+            session_dict.message_preview = last_log.answer
+
+        results.append(session_dict)
+
+    return results
+
+
+@router.get("/sessions/active", response_model=Optional[ChatSessionResponse])
+def get_active_session(
+    user_id: int = Query(...),
+    authenticated_user_id: int = Depends(_get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Get the user's active session if one exists."""
+    if user_id != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Cannot access other users' sessions")
+
+    session = (
+        db.query(ChatSession)
+        .filter(ChatSession.user_id == user_id, ChatSession.status == "active")
+        .first()
+    )
+
+    if not session:
+        return None
+
+    # Enrich response with message_count and message_preview (matching list_sessions logic)
+    session_response = ChatSessionResponse.model_validate(session)
+
+    # Count messages in this session
+    message_count = db.query(ChatLog).filter(ChatLog.session_id == session.id).count()
+    session_response.message_count = message_count
+
+    # Get the last message for preview
+    last_log = (
+        db.query(ChatLog)
+        .filter(ChatLog.session_id == session.id)
+        .order_by(ChatLog.created_at.desc())
+        .first()
+    )
+    if last_log:
+        session_response.message_preview = last_log.answer
+
+    return session_response
+
+
+@router.post("/sessions/{session_id}/close", response_model=ChatSessionResponse)
+def close_session(
+    session_id: int,
+    authenticated_user_id: int = Depends(_get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Close a chat session."""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    if session.user_id != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Cannot close other users' sessions")
+
+    session.status = "closed"
+    session.closed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+@router.delete("/sessions/{session_id}")
+def delete_session(
+    session_id: int,
+    authenticated_user_id: int = Depends(_get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Delete a chat session and all its chat logs."""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    if session.user_id != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Cannot delete other users' sessions")
+
+    # Delete all chat logs for this session
+    db.query(ChatLog).filter(ChatLog.session_id == session_id).delete()
+    # Delete the session
+    db.delete(session)
+    db.commit()
+
+    return {"message": "Session deleted successfully"}
+
+
+@router.get("/sessions/{session_id}/messages", response_model=List[ChatSessionMessages])
+def get_session_messages(
+    session_id: int,
+    authenticated_user_id: int = Depends(_get_current_user_id),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Get all messages in a chat session."""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+
+    if session.user_id != authenticated_user_id:
+        raise HTTPException(status_code=403, detail="Cannot access other users' sessions")
+
+    logs = (
+        db.query(ChatLog)
+        .filter(ChatLog.session_id == session_id)
+        .order_by(ChatLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    # Reverse to get chronological order (newest first, but each message pair in order)
+    logs = list(reversed(logs))
+
+    messages = []
+    for log in logs:
+        messages.append(
+            ChatSessionMessages(
+                role="user",
+                text=log.question,
+                created_at=log.created_at,
+            )
+        )
+        messages.append(
+            ChatSessionMessages(
+                role="bot",
+                text=log.answer,
+                intent=log.intent,
+                escalated=log.escalated,
+                created_at=log.created_at,
+            )
+        )
+
+    return messages

@@ -15,11 +15,11 @@ def _resolve_user(request: Request, db: Session) -> tuple[User | None, FarmOSUse
     """FarmOS 쿠키 인증 우선, 없으면 X-User-Id 헤더 폴백."""
     farmos_user = get_farmos_user_optional(request)
     if farmos_user:
-        user = db.query(User).filter(User.name == farmos_user.name).first()
+        user = db.query(User).filter(User.user_id == farmos_user.user_id).first()
         if not user:
             user = User(
+                user_id=farmos_user.user_id,
                 name=farmos_user.name,
-                email=f"{farmos_user.user_id}@farmos.kr",
             )
             db.add(user)
             db.commit()
@@ -65,18 +65,18 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
 
     # FarmOS 인증 통과 → 쇼핑몰 DB에서 사용자 매칭
     name = farmos_data.get("name", "")
-    farmos_user_id = farmos_data.get("user_id", "")
+    user_id = farmos_data.get("user_id", "")
 
-    user = db.query(User).filter(User.name == name).first()
+    user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
-        user = User(name=name, email=f"{farmos_user_id}@farmos.kr")
+        user = User(user_id=user_id, name=name)
         db.add(user)
         db.commit()
         db.refresh(user)
 
     return {
         "authenticated": True,
-        "farmos_user_id": farmos_user_id,
+        "login_id": user_id,
         "name": name,
         "shop_user_id": user.id,
     }

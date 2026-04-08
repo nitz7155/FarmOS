@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def to_camel(s: str) -> str:
@@ -9,11 +9,18 @@ def to_camel(s: str) -> str:
     return parts[0] + "".join(w.capitalize() for w in parts[1:])
 
 
+class ChatHistoryItem(BaseModel):
+    role: str  # "user" | "bot"
+    text: str
+
+
 class ChatQuestion(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     question: str
     user_id: Optional[int] = None
+    session_id: Optional[int] = None
+    history: List[ChatHistoryItem] = []
 
 
 class ChatAnswer(BaseModel):
@@ -40,4 +47,4 @@ class ChatLogResponse(BaseModel):
 class ChatRating(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
-    rating: int
+    rating: int = Field(..., ge=1, le=5)

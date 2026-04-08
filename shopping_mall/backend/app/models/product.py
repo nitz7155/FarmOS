@@ -25,6 +25,7 @@ class Product(Base):
     images: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     options: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     stock: Mapped[int] = mapped_column(Integer, default=0)
+    restock_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     rating: Mapped[float] = mapped_column(Float, default=0.0)
     review_count: Mapped[int] = mapped_column(Integer, default=0)
     sales_count: Mapped[int] = mapped_column(Integer, default=0)

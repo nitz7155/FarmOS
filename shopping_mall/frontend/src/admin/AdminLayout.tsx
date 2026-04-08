@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import { useUserStore } from '@/stores/userStore';
-
 const navItems = [
   { to: '/admin', label: '대시보드', icon: '📊', end: true },
-  { to: '/admin/chatbot', label: '챗봇 관리', icon: '🤖', end: false },
+  { to: '/admin/chatbot', label: '챗봇 관리', icon: '💬', end: false },
+  { to: '/admin/cs-insights', label: 'CS 인사이트', icon: '💡', end: false },
   { to: '/admin/calendar', label: '판매 캘린더', icon: '📅', end: false },
   { to: '/admin/shipments', label: '배송 관리', icon: '🚚', end: false },
   { to: '/admin/reports', label: '리포트', icon: '📋', end: false },
@@ -62,7 +62,7 @@ export default function AdminLayout() {
           <div />
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-600">
-              {isLoggedIn && user ? `${user.name} (${user.farmos_user_id})` : '관리자'}
+              {isLoggedIn && user ? `${user.name} (${user.login_id})` : '관리자'}
             </span>
             <div className="w-8 h-8 rounded-full bg-[#03C75A] text-white flex items-center justify-center text-sm font-bold">
               {user?.name?.charAt(0) ?? 'A'}

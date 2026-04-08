@@ -2,45 +2,62 @@
 import logging
 from typing import Optional
 
+from ai import CHROMA_DB_PATH
+
 logger = logging.getLogger(__name__)
 
 
 class RAGService:
     """RAG service with ChromaDB for document retrieval and LLM for generation."""
 
-    def __init__(self, llm_client, persist_directory: str = "./chroma_data"):
+    def __init__(self, llm_client, persist_directory: str | None = None):
         self.llm_client = llm_client
         self.chroma_client = None
+        self._ef = None
+        if persist_directory is None:
+            persist_directory = CHROMA_DB_PATH
         self._init_chroma(persist_directory)
 
     def _init_chroma(self, persist_directory: str):
         """Initialize ChromaDB client. Gracefully handles unavailability."""
         try:
             import chromadb
+            from chromadb.utils import embedding_functions
             self.chroma_client = chromadb.PersistentClient(path=persist_directory)
+            self._ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="jhgan/ko-sroberta-multitask"
+            )
             logger.info("ChromaDB initialized successfully.")
         except Exception as e:
             logger.warning(f"ChromaDB initialization failed: {e}. RAG will use fallback.")
             self.chroma_client = None
 
     def _get_collection(self, collection_name: str):
-        """Get or create a ChromaDB collection."""
+        """Get a ChromaDB collection with embedding function."""
         if self.chroma_client is None:
             return None
         try:
-            return self.chroma_client.get_or_create_collection(name=collection_name)
+            return self.chroma_client.get_collection(
+                name=collection_name,
+                embedding_function=self._ef,
+            )
         except Exception as e:
-            logger.warning(f"Failed to get collection '{collection_name}': {e}")
+            logger.error(
+                f"Failed to get collection '{collection_name}': {e}. "
+                "seed_rag.py를 먼저 실행하세요: uv run python ai/seed_rag.py"
+            )
             return None
 
-    async def query(self, question: str, collection: str = "faq", top_k: int = 3) -> str:
+    async def query(self, question: str, collection: str = "faq", intent: str | None = None, top_k: int = 3) -> str:
         """Query documents and generate an answer using RAG."""
         col = self._get_collection(collection)
         if col is None:
             return await self._fallback_answer(question)
 
         try:
-            results = col.query(query_texts=[question], n_results=top_k)
+            # faq 컬렉션은 intent로 필터링해서 관련 없는 FAQ 배제
+            where = {"intent": intent} if (collection == "faq" and intent) else None
+            results = col.query(query_texts=[question], n_results=top_k, where=where)
             documents = results.get("documents", [[]])[0]
             if not documents:
                 return await self._fallback_answer(question)
@@ -54,7 +71,7 @@ class RAGService:
             )
             return await self.llm_client.generate(
                 prompt,
-                system="당신은 농산물 쇼핑몰 고객 지원 전문가입니다. 참고 자료를 기반으로 정확하게 답변하세요.",
+                system="당신은 농산물 쇼핑몰 고객 지원 전문가입니다. 참고 자료를 기반으로 정확하게 답변하세요. 반드시 한국어로만 답변하세요.",
             )
         except Exception as e:
             logger.warning(f"RAG query failed: {e}")

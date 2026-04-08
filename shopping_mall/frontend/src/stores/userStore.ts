@@ -4,7 +4,7 @@ const FARMOS_API = 'http://localhost:8000/api/v1';
 const SHOP_API = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
 interface AuthUser {
-  farmos_user_id: string;
+  login_id: string;
   name: string;
   shop_user_id: number | null;
 }
@@ -33,7 +33,7 @@ export const useUserStore = create<UserState>((set) => ({
         if (data.authenticated) {
           set({
             user: {
-              farmos_user_id: data.farmos_user_id,
+              login_id: data.login_id,
               name: data.name,
               shop_user_id: data.shop_user_id,
             },

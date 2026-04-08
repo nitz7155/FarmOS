@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Header from '@/components/common/Header';
 import Footer from '@/components/common/Footer';
+import ChatWidget from '@/components/common/ChatWidget';
 import { useUserStore } from '@/stores/userStore';
 
 export default function App() {
@@ -18,6 +19,7 @@ export default function App() {
         <Outlet />
       </main>
       <Footer />
+      <ChatWidget />
     </div>
   );
 }

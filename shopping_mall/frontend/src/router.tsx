@@ -15,6 +15,7 @@ import StorePage from '@/pages/StorePage';
 import AdminLayout from '@/admin/AdminLayout';
 import DashboardPage from '@/admin/pages/DashboardPage';
 import ChatbotPage from '@/admin/pages/ChatbotPage';
+import CsInsightsPage from '@/admin/pages/CsInsightsPage';
 import CalendarPage from '@/admin/pages/CalendarPage';
 import ShipmentsPage from '@/admin/pages/ShipmentsPage';
 import ReportsPage from '@/admin/pages/ReportsPage';
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'chatbot', element: <ChatbotPage /> },
+      { path: 'cs-insights', element: <CsInsightsPage /> },
       { path: 'calendar', element: <CalendarPage /> },
       { path: 'shipments', element: <ShipmentsPage /> },
       { path: 'reports', element: <ReportsPage /> },

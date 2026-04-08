@@ -12,6 +12,7 @@ from .revenue import RevenueEntry
 from .expense import ExpenseEntry
 from .weekly_report import WeeklyReport
 from .customer_segment import CustomerSegment
+from .chat_session import ChatSession
 from .chat_log import ChatLog
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "ExpenseEntry",
     "WeeklyReport",
     "CustomerSegment",
+    "ChatSession",
     "ChatLog",
 ]

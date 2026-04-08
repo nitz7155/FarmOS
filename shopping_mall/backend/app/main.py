@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 from app.routers import products, categories, cart, orders, users, reviews, stores, wishlists
 from app.routers import shipments, calendar, reports, analytics, chatbot
+from app import models  # noqa: F401 - Import models to register them with Base
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to start scheduler: {e}")
         sched = None
+
+    try:
+        from app.routers.chatbot import set_chatbot_service
+        from app.services.ai_chatbot import ChatbotService
+        from ai.llm_client import LLMClient
+        from ai.rag import RAGService
+        llm = LLMClient()
+        rag = RAGService(llm_client=llm)
+        set_chatbot_service(ChatbotService(llm_client=llm, rag_service=rag))
+        logger.info("Chatbot service initialized.")
+    except Exception as e:
+        logger.warning(f"Failed to initialize chatbot service: {e}")
 
     yield
 
