@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
@@ -13,13 +13,38 @@ export default function SignupPage() {
     email: '',
     password: '',
     password_confirm: '',
-    location: '',
     area: '',
     farmname: '',
   });
   const [loading, setLoading] = useState(false);
+  const [postcode, setPostcode] = useState('');
+  const [roadAddress, setRoadAddress] = useState('');
+  const [detailAddress, setDetailAddress] = useState('');
+
+  useEffect(() => {
+    if (document.getElementById('daum-postcode-script')) return;
+    const script = document.createElement('script');
+    script.id = 'daum-postcode-script';
+    script.src = '//t1.kakaocdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js';
+    script.async = true;
+    document.head.appendChild(script);
+  }, []);
 
   const update = (field: string, value: string) => setForm(prev => ({ ...prev, [field]: value }));
+
+  const handleAddressSearch = () => {
+    if (typeof daum === 'undefined') {
+      toast.error('주소 검색 서비스를 불러올 수 없습니다.');
+      return;
+    }
+    new daum.Postcode({
+      oncomplete(data) {
+        setPostcode(data.zonecode);
+        setRoadAddress(data.roadAddress);
+        setDetailAddress('');
+      },
+    }).open();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +63,10 @@ export default function SignupPage() {
     setLoading(true);
     try {
       const { password_confirm, area, ...rest } = form;
-      const body = { ...rest, area: area ? parseFloat(area) : 0 };
+      const finalLocation = detailAddress
+        ? `${roadAddress} ${detailAddress}`.trim()
+        : roadAddress;
+      const body = { ...rest, location: finalLocation, area: area ? parseFloat(area) : 0 };
       const res = await fetch(`${API_BASE}/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -101,8 +129,37 @@ export default function SignupPage() {
               <input type="text" value={form.farmname} onChange={e => update('farmname', e.target.value)} placeholder="선택 사항" className={inputClass} />
             </div>
             <div>
-              <label className="block text-base font-medium text-gray-700 mb-1">지역</label>
-              <input type="text" value={form.location} onChange={e => update('location', e.target.value)} placeholder="예: 경북 영주시" className={inputClass} />
+              <label className="block text-base font-medium text-gray-700 mb-1">주소</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={postcode}
+                  readOnly
+                  placeholder="우편번호"
+                  className={`${inputClass} bg-gray-100 cursor-not-allowed flex-1`}
+                />
+                <button
+                  type="button"
+                  onClick={handleAddressSearch}
+                  className="px-4 py-3 bg-primary text-white rounded-xl font-semibold whitespace-nowrap hover:opacity-90 transition"
+                >
+                  우편번호 찾기
+                </button>
+              </div>
+              <input
+                type="text"
+                value={roadAddress}
+                readOnly
+                placeholder="도로명주소"
+                className={`${inputClass} bg-gray-100 cursor-not-allowed mt-2`}
+              />
+              <input
+                type="text"
+                value={detailAddress}
+                onChange={e => setDetailAddress(e.target.value)}
+                placeholder="상세주소 입력"
+                className={`${inputClass} mt-2`}
+              />
             </div>
             <div>
               <label className="block text-base font-medium text-gray-700 mb-1">면적 (평)</label>

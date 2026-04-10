@@ -13,7 +13,7 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(10), nullable=False)
     password: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    location: Mapped[str] = mapped_column(String(10), default="")
+    location: Mapped[str] = mapped_column(String(100), default="")
     area: Mapped[float] = mapped_column(Float, default=0.0)
     farmname: Mapped[str] = mapped_column(String(40), default="")
     profile: Mapped[str] = mapped_column(String(255), default="")

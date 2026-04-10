@@ -1,5 +1,6 @@
 """SQLAlchemy async engine & session 관리."""
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -27,10 +28,25 @@ async def get_db():
         yield session
 
 
+async def _ensure_column_widths():
+    """기존 DB에서 컬럼 크기가 모델과 맞지 않을 때 자동 보정."""
+    async with engine.begin() as conn:
+        result = await conn.execute(text(
+            "SELECT character_maximum_length FROM information_schema.columns "
+            "WHERE table_name = 'users' AND column_name = 'location'"
+        ))
+        row = result.first()
+        if row and row[0] is not None and row[0] < 100:
+            await conn.execute(text(
+                "ALTER TABLE users ALTER COLUMN location TYPE VARCHAR(100)"
+            ))
+
+
 async def init_db():
     """앱 시작 시 테이블 생성."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _ensure_column_widths()
 
 
 async def close_db():

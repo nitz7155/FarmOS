@@ -6,7 +6,7 @@ class SignupRequest(BaseModel):
     name: str = Field(min_length=2, max_length=10)
     email: str
     password: str = Field(min_length=4)
-    location: str = ""
+    location: str = Field(default="", max_length=100)
     area: float = 0.0
     farmname: str = ""
     profile: str = ""
