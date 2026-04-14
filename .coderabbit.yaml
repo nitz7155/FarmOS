@@ -37,66 +37,30 @@ reviews:
   path_instructions:
     - path: "backend/**"
       instructions: |
-        Python 백엔드 코드 리뷰:
-        - SQLAlchemy ORM 패턴 (원본 SQL 지양)
-        - 비동기 코드 일관성 (async/await)
-        - 입력값 검증 (Pydantic)
-        - RAG/임베딩 최적화
+        Python 백엔드 코드 리뷰 (보안/성능/스타일/아키텍처 순으로 검토):
+        [보안] SQL injection 방지(원본 SQL 금지, ORM 필수), Pydantic으로 입력값 검증, API key·비밀번호 하드코딩 금지, CORS·JWT 인증 설정 확인
+        [성능] N+1 쿼리 방지(joinedload 활용), DB 인덱스 고려, RAG 임베딩 캐싱·배치 처리, 블로킹 작업·무한 루프 확인
+        [스타일] snake_case 준수, 타입 힌팅 적용, 100자 라인 길이(ruff), async/await 일관성, 명확한 변수·함수명
+        [아키텍처] FastAPI 라우터/스키마 분리, Depends 의존성 주입, 서비스 계층 활용, config.py에서 설정 관리
+        [FarmOS 특화] RAG 시스템(임베딩 모델·청킹·검색 전략), ChromaDB(컬렉션 관리·메타데이터), IoT 센서 데이터 처리·정규화, 농산물 도메인 로직 일관성
+        [테스트] 주요 기능 단위 테스트, DB 포함 통합 테스트, Mock 적절성
 
     - path: "frontend/**"
       instructions: |
-        React/TypeScript 코드 리뷰:
-        - 함수형 컴포넌트, hooks 사용
-        - strict mode, 타입 안전성
-        - key prop 필수 (lists)
-        - XSS 취약점 확인
+        React/TypeScript 코드 리뷰 (보안/품질/스타일 순으로 검토):
+        [보안] XSS 취약점 확인, 모든 API 호출에 credentials: "include" 포함 여부
+        [품질] 함수형 컴포넌트·hooks 사용, key prop 필수(리스트 렌더링), 불필요한 리렌더링 방지, 에러 핸들링(react-hot-toast)
+        [스타일] PascalCase 컴포넌트명, strict mode·타입 안전성, 명확한 변수·함수명
+        [아키텍처] Context + Custom Hooks 상태 관리, 새 기능은 src/modules/<기능명>/ 구조 준수, 타입은 src/types/index.ts에 정의
 
-# 리뷰 톤 및 지시사항
-tone_instructions: |
-  ## FarmOS 팀 코드 리뷰 가이드
+    - path: "shopping_mall/**"
+      instructions: |
+        쇼핑몰 코드 리뷰:
+        [백엔드] shopping_mall/backend/app/routers/에 라우터 추가, SQLAlchemy 동기 Session 사용 일관성, Pydantic 입력값 검증
+        [프론트엔드] 모든 API 호출에 credentials: "include" 포함, 에러 핸들링, 타입 안전성
 
-  다음 관점에서 한국어로 상세히 리뷰해주세요.
-
-  ### 1. 보안 (필수)
-  - SQL injection: ORM 쿼리 사용 확인, 원본 SQL 지양
-  - 입력값 검증: Pydantic 스키마 활용
-  - 민감한 정보 노출: API key, 비밀번호 등
-  - CORS, 인증 설정
-
-  ### 2. 성능 (필수)
-  - SQLAlchemy N+1 쿼리: joinedload() 활용
-  - DB 인덱스 고려
-  - RAG 성능: 임베딩 캐싱, 배치 처리
-  - 무한 루프/블로킹 작업
-
-  ### 3. 코드 스타일 (필수)
-  - snake_case, PascalCase 준수
-  - 100자 라인 길이 (ruff 설정)
-  - 타입 힌팅 권장
-  - 명확한 변수/함수명
-
-  ### 4. 아키텍처 (권장)
-  - FastAPI 라우터/스키마 분리
-  - 의존성 주입 (Depends)
-  - 서비스 계층 활용
-  - config.py에서 설정 관리
-
-  ### 5. 테스트 (권장)
-  - 주요 기능 테스트 작성
-  - 통합 테스트 (DB 포함)
-  - Mock 사용 적절성
-
-  ### 6. FarmOS 특화 (도메인 중심)
-  - RAG 시스템: 임베딩 모델, 청킹, 검색 전략
-  - ChromaDB: 컬렉션 관리, 메타데이터
-  - IoT: 센서 데이터 처리, 정규화
-  - 농산물: 도메인 로직 일관성
-
-  ### 피드백 작성 규칙
-  - 구체적인 개선 방안 제시
-  - 코드 예시 포함
-  - 문제가 없으면 칭찬
-  - 비판적이지만 건설적으로
+# 리뷰 톤 (간결하게 — 상세 지침은 path_instructions에 있음)
+tone_instructions: "한국어로 리뷰. 구체적인 개선 방안과 코드 예시를 함께 제시. 문제가 없으면 칭찬. 건설적이고 명확하게."
 
 # 코드 가이드라인 및 기준
 # 자세한 내용은 CODERABBIT_GUIDELINES.md 참고
