@@ -30,6 +30,9 @@ def get_farmos_user_optional(request: Request) -> FarmOSUser | None:
         return None
     try:
         payload = jwt.decode(token, FARMOS_SECRET_KEY, algorithms=[ALGORITHM])
+        # Refresh Token 거부 — Access Token만 허용
+        if payload.get("type") != "access":
+            return None
         user_id = payload.get("sub", "")
         name = payload.get("name", "")
         if not user_id:

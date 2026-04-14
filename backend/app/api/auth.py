@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.core.security import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.core.security import (
+    create_access_token, create_refresh_token, decode_refresh_token,
+    ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS,
+)
 from app.core import user_store
 from app.models.user import User
 from app.schemas.auth import (
@@ -18,6 +21,7 @@ from app.schemas.auth import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 COOKIE_KEY = "farmos_token"
+REFRESH_COOKIE_KEY = "farmos_refresh_token"
 
 # 비밀번호 재설정용 일회용 토큰 저장소 (인메모리, 5분 만료)
 _reset_tokens: dict[str, dict] = {}  # {token: {"user_id": str, "expires": float}}
@@ -57,6 +61,18 @@ def _set_token_cookie(response: Response, token: str):
     )
 
 
+def _set_refresh_cookie(response: Response, token: str):
+    response.set_cookie(
+        key=REFRESH_COOKIE_KEY,
+        value=token,
+        httponly=True,
+        secure=False,       # 개발환경 HTTP → False, 프로덕션에서는 True
+        samesite="lax",
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/",
+    )
+
+
 def _user_response(user: User) -> UserResponse:
     """User 모델 → UserResponse 변환 헬퍼."""
     return UserResponse(
@@ -85,7 +101,9 @@ async def signup(req: SignupRequest, response: Response, db: AsyncSession = Depe
     if not user:
         raise HTTPException(400, "이미 사용 중인 아이디 또는 이메일입니다.")
     token = create_access_token({"sub": user.id, "name": user.name})
+    refresh_token = create_refresh_token({"sub": user.id, "name": user.name})
     _set_token_cookie(response, token)
+    _set_refresh_cookie(response, refresh_token)
     return _user_response(user)
 
 
@@ -102,7 +120,9 @@ async def login(req: LoginRequest, request: Request, response: Response, db: Asy
     # 로그인 성공 시 해당 IP의 시도 기록 초기화
     _login_attempts.pop(client_ip, None)
     token = create_access_token({"sub": user.id, "name": user.name})
+    refresh_token = create_refresh_token({"sub": user.id, "name": user.name})
     _set_token_cookie(response, token)
+    _set_refresh_cookie(response, refresh_token)
     return {"user_id": user.id, "name": user.name}
 
 
@@ -110,7 +130,27 @@ async def login(req: LoginRequest, request: Request, response: Response, db: Asy
 async def logout(response: Response):
     """로그아웃 — 쿠키 삭제."""
     response.delete_cookie(key=COOKIE_KEY, path="/")
+    response.delete_cookie(key=REFRESH_COOKIE_KEY, path="/")
     return {"message": "로그아웃되었습니다."}
+
+
+@router.post("/refresh")
+async def refresh_token(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Refresh Token으로 새 Access Token 발급."""
+    refresh = request.cookies.get(REFRESH_COOKIE_KEY)
+    if not refresh:
+        raise HTTPException(401, "리프레시 토큰이 없습니다.")
+    payload = decode_refresh_token(refresh)
+    if payload is None:
+        response.delete_cookie(key=REFRESH_COOKIE_KEY, path="/")
+        raise HTTPException(401, "리프레시 토큰이 만료되었거나 유효하지 않습니다.")
+    user_id = payload.get("sub", "")
+    user = await user_store.find_by_id(db, user_id)
+    if user is None:
+        raise HTTPException(401, "사용자를 찾을 수 없습니다.")
+    new_access = create_access_token({"sub": user.id, "name": user.name})
+    _set_token_cookie(response, new_access)
+    return {"message": "토큰이 갱신되었습니다."}
 
 
 @router.get("/me", response_model=UserResponse)

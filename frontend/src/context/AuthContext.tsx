@@ -1,6 +1,9 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 
 const API_BASE = 'http://localhost:8000/api/v1';
+
+// Access token 만료 5분 전에 자동 갱신 (55분)
+const TOKEN_REFRESH_INTERVAL = 55 * 60 * 1000;
 
 export interface AuthUser {
   user_id: string;
@@ -35,14 +38,35 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 앱 시작 시 쿠키 기반으로 서버에 인증 상태 확인
-  const checkAuth = useCallback(async () => {
+  const clearRefreshTimer = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearInterval(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+  }, []);
+
+  // Refresh Token으로 Access Token 갱신
+  const refreshAccessToken = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // 서버에서 현재 사용자 정보 조회
+  const fetchUser = useCallback(async (): Promise<AuthUser | null> => {
     try {
       const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        setUser({
+        return {
           user_id: data.user_id,
           name: data.name,
           email: data.email ?? '',
@@ -58,28 +82,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           has_farm_registration: data.has_farm_registration ?? false,
           years_rural_residence: data.years_rural_residence ?? 0,
           years_farming: data.years_farming ?? 0,
-        });
-      } else {
-        // 인증 실패 시 만료/무효 쿠키 정리
-        await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // 토큰 자동 갱신 타이머 시작
+  const startRefreshTimer = useCallback(() => {
+    clearRefreshTimer();
+    refreshTimerRef.current = setInterval(async () => {
+      const refreshed = await refreshAccessToken();
+      if (!refreshed) {
+        clearRefreshTimer();
         setUser(null);
       }
-    } catch {
+    }, TOKEN_REFRESH_INTERVAL);
+  }, [refreshAccessToken, clearRefreshTimer]);
+
+  // 앱 시작 시 인증 상태 확인 (refresh 포함)
+  const checkAuth = useCallback(async () => {
+    let userData = await fetchUser();
+    if (!userData) {
+      // Access token 만료 → refresh 시도
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        userData = await fetchUser();
+      }
+    }
+    if (userData) {
+      setUser(userData);
+      startRefreshTimer();
+    } else {
       setUser(null);
+      clearRefreshTimer();
     }
     setIsLoading(false);
-  }, []);
+  }, [fetchUser, refreshAccessToken, startRefreshTimer, clearRefreshTimer]);
 
   useEffect(() => {
     checkAuth();
-  }, [checkAuth]);
-
-  // Periodic session re-validation — detects backend restart
-  useEffect(() => {
-    if (!user) return;
-    const interval = setInterval(checkAuth, 30_000);
-    return () => clearInterval(interval);
-  }, [user, checkAuth]);
+    return () => clearRefreshTimer();
+  }, [checkAuth, clearRefreshTimer]);
 
   const login = async (userId: string, password: string) => {
     const res = await fetch(`${API_BASE}/auth/login`, {
@@ -92,11 +138,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const err = await res.json();
       throw new Error(err.detail || '로그인에 실패했습니다.');
     }
-    // 로그인 후 전체 프로필 다시 조회 (onboarding_completed 포함)
     await checkAuth();
   };
 
   const logout = async () => {
+    clearRefreshTimer();
     await fetch(`${API_BASE}/auth/logout`, {
       method: 'POST',
       credentials: 'include',
@@ -105,8 +151,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshUser = useCallback(async () => {
-    await checkAuth();
-  }, [checkAuth]);
+    const userData = await fetchUser();
+    if (userData) {
+      setUser(userData);
+    }
+  }, [fetchUser]);
 
   const needsOnboarding = !!user && !user.onboarding_completed;
 

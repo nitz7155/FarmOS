@@ -50,7 +50,7 @@ def auth_status(request: Request, db: Session = Depends(get_db)):
     if not token:
         return {"authenticated": False}
 
-    # FarmOS 백엔드에 직접 검증 요청 (boot_id 체크 포함)
+    # FarmOS 백엔드에 직접 검증 요청
     try:
         res = httpx.get(
             f"{FARMOS_API}/auth/me",
