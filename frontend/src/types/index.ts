@@ -411,6 +411,57 @@ export interface ImportantChange {
   direction: "up" | "down";
 }
 
+// Manual Control (IoT 수동 제어)
+export interface ControlItemState {
+  active: boolean;
+  led_on: boolean;
+  locked: boolean;
+  source: "manual" | "button" | "ai" | "rule" | "tool";
+  updated_at: string | null;
+}
+
+export interface VentilationState extends ControlItemState {
+  window_open_pct: number;
+  fan_speed: number;
+}
+
+export interface IrrigationControlState extends ControlItemState {
+  valve_open: boolean;
+  daily_total_L: number;
+  last_watered: string | null;
+  nutrient: { N: number; P: number; K: number };
+}
+
+export interface LightingState extends ControlItemState {
+  on: boolean;
+  brightness_pct: number;
+}
+
+export interface ShadingState extends ControlItemState {
+  shade_pct: number;
+  insulation_pct: number;
+}
+
+export interface ManualControlState {
+  ventilation: VentilationState;
+  irrigation: IrrigationControlState;
+  lighting: LightingState;
+  shading: ShadingState;
+}
+
+export interface ControlCommand {
+  control_type: "ventilation" | "irrigation" | "lighting" | "shading";
+  action: Record<string, unknown>;
+  source: "manual" | "button";
+}
+
+export interface ControlEvent {
+  control_type: string;
+  state: Record<string, unknown>;
+  source: string;
+  timestamp: string;
+}
+
 // AI Agent
 export interface AIControlState {
   ventilation: { window_open_pct: number; fan_speed: number };

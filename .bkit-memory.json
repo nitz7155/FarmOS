@@ -1,11 +1,11 @@
 {
-  "feature": "iot-ai-agent-automation",
-  "phase": "plan",
+  "feature": "iot-manual-control",
+  "phase": "completed",
   "level": "Dynamic",
   "teamMode": true,
-  "startedAt": "2026-04-14T00:00:00Z",
-  "iterationCount": 0,
-  "matchRate": 0,
+  "startedAt": "2026-04-16T00:00:00Z",
+  "iterationCount": 1,
+  "matchRate": 98,
   "priorWork": {
     "feature": "farmos_review_analysis",
     "archivedAt": "2026-04-13",

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { SensorReading, IrrigationEvent, SensorAlert } from '@/types';
+import type { SensorReading, IrrigationEvent, SensorAlert, ControlEvent } from '@/types';
 
-const API_BASE = 'http://iot.lilpa.moe/api/v1';
+const API_BASE = 'https://iot.lilpa.moe/api/v1';
 const FULL_SYNC_INTERVAL = 60000; // 전체 동기화는 60초마다 (fallback)
 
 interface SensorData {
@@ -10,6 +10,24 @@ interface SensorData {
   alerts: SensorAlert[];
   irrigations: IrrigationEvent[];
   connected: boolean;
+}
+
+// Design Ref: §4.4 — SSE control 이벤트 콜백 지원
+type ControlEventHandler = (event: ControlEvent) => void;
+const _controlHandlers: Set<ControlEventHandler> = new Set();
+
+export function onControlEvent(handler: ControlEventHandler) {
+  _controlHandlers.add(handler);
+  return () => { _controlHandlers.delete(handler); };
+}
+
+// SSE ai_decision 이벤트 콜백
+type AnyEventHandler = (data: unknown) => void;
+const _aiDecisionHandlers: Set<AnyEventHandler> = new Set();
+
+export function onAIDecisionEvent(handler: AnyEventHandler) {
+  _aiDecisionHandlers.add(handler);
+  return () => { _aiDecisionHandlers.delete(handler); };
 }
 
 export function useSensorData() {
@@ -65,29 +83,59 @@ export function useSensorData() {
     eventSourceRef.current = es;
 
     es.addEventListener('sensor', (e) => {
-      const reading = JSON.parse(e.data) as SensorReading;
-      setData(prev => ({
-        ...prev,
-        latest: reading,
-        history: [...prev.history.slice(-(99)), reading],
-        connected: true,
-      }));
+      try {
+        const reading = JSON.parse(e.data) as SensorReading;
+        setData(prev => ({
+          ...prev,
+          latest: reading,
+          history: [...prev.history.slice(-(99)), reading],
+          connected: true,
+        }));
+      } catch (err) {
+        console.warn('[SSE] sensor parse error:', err);
+      }
     });
 
     es.addEventListener('alert', (e) => {
-      const alert = JSON.parse(e.data) as SensorAlert;
-      setData(prev => ({
-        ...prev,
-        alerts: [alert, ...prev.alerts],
-      }));
+      try {
+        const alert = JSON.parse(e.data) as SensorAlert;
+        setData(prev => ({
+          ...prev,
+          alerts: [alert, ...prev.alerts],
+        }));
+      } catch (err) {
+        console.warn('[SSE] alert parse error:', err);
+      }
     });
 
     es.addEventListener('irrigation', (e) => {
-      const event = JSON.parse(e.data) as IrrigationEvent;
-      setData(prev => ({
-        ...prev,
-        irrigations: [event, ...prev.irrigations],
-      }));
+      try {
+        const event = JSON.parse(e.data) as IrrigationEvent;
+        setData(prev => ({
+          ...prev,
+          irrigations: [event, ...prev.irrigations],
+        }));
+      } catch (err) {
+        console.warn('[SSE] irrigation parse error:', err);
+      }
+    });
+
+    es.addEventListener('control', (e) => {
+      try {
+        const controlEvent = JSON.parse(e.data) as ControlEvent;
+        _controlHandlers.forEach(handler => handler(controlEvent));
+      } catch (err) {
+        console.warn('[SSE] control parse error:', err);
+      }
+    });
+
+    es.addEventListener('ai_decision', (e) => {
+      try {
+        const decision = JSON.parse(e.data);
+        _aiDecisionHandlers.forEach(handler => handler(decision));
+      } catch (err) {
+        console.warn('[SSE] ai_decision parse error:', err);
+      }
     });
 
     es.onopen = () => {

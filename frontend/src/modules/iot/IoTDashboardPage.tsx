@@ -3,6 +3,7 @@ import { MdWaterDrop, MdThermostat, MdOpacity, MdWbSunny, MdWarning, MdWifiOff, 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Cell } from 'recharts';
 import { useSensorData } from '@/hooks/useSensorData';
 import AIAgentPanel from './AIAgentPanel';
+import ManualControlPanel from './ManualControlPanel';
 
 function SensorCard({ icon: Icon, label, value, unit, color, threshold, warning, disabled }: {
   icon: React.ElementType; label: string; value: number | null; unit: string;
@@ -437,6 +438,9 @@ export default function IoTDashboardPage() {
           )}
         </div>
       </div>
+
+      {/* 수동 제어 패널 */}
+      <ManualControlPanel />
 
       {/* AI Agent 제어 패널 */}
       <AIAgentPanel />

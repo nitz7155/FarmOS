@@ -132,7 +132,7 @@ function DecisionItem({ decision }: { decision: AIDecision }) {
 }
 
 export default function AIAgentPanel() {
-  const { status, loading, toggle, updateCropProfile } = useAIAgent();
+  const { status, decisions, loading, toggle, updateCropProfile } = useAIAgent();
   const [profileOpen, setProfileOpen] = useState(false);
   const [showAllDecisions, setShowAllDecisions] = useState(false);
 
@@ -157,8 +157,7 @@ export default function AIAgentPanel() {
     );
   }
 
-  const { control_state: cs, latest_decision, crop_profile } = status;
-  const decisions: AIDecision[] = latest_decision ? [latest_decision] : [];
+  const { control_state: cs, crop_profile } = status;
 
   return (
     <>
@@ -294,7 +293,7 @@ export default function AIAgentPanel() {
         )}
 
         {/* 최근 판단 이력 */}
-        {status.enabled && latest_decision && (
+        {status.enabled && decisions.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
@@ -302,9 +301,17 @@ export default function AIAgentPanel() {
                 <span className="text-sm font-semibold text-gray-700">최근 판단</span>
                 <span className="text-xs text-gray-400">({status.total_decisions}건)</span>
               </div>
+              {decisions.length > 5 && (
+                <button
+                  onClick={() => setShowAllDecisions(!showAllDecisions)}
+                  className="text-xs text-blue-500 hover:text-blue-700"
+                >
+                  {showAllDecisions ? '접기' : `전체 ${decisions.length}건 보기`}
+                </button>
+              )}
             </div>
-            <div className="bg-gray-50 rounded-xl p-3">
-              {decisions.map(d => (
+            <div className="bg-gray-50 rounded-xl p-3 max-h-80 overflow-y-auto">
+              {(showAllDecisions ? decisions : decisions.slice(0, 5)).map(d => (
                 <DecisionItem key={d.id} decision={d} />
               ))}
             </div>
