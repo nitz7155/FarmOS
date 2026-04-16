@@ -9,6 +9,17 @@ from app.models.user import User
 
 from app.services.diagnosis_agent import run_diagnosis
 
+from pydantic import BaseModel, Field
+
+class CreateDiagnosisHistoryRequest(BaseModel):
+    pest: str = Field(min_length=1, max_length=100)
+    crop: str = Field(min_length=1, max_length=100)
+    region: str = Field(min_length=1, max_length=100)
+    image_url: str | None = None
+
+class CreateChatMessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
+
 router = APIRouter(prefix="/diagnosis", tags=["diagnosis"])
 
 @router.get("/history")
@@ -40,15 +51,15 @@ async def get_diagnosis_history(
 
 @router.post("/history")
 async def create_diagnosis_history(
-    payload: dict,
+    payload: CreateDiagnosisHistoryRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """진단 결과 저장 (VLM 완료 후 호출 -> LangGraph 오케스트레이션 진행)."""
     # 프론트에서 받은 순수 키워드
-    pest = payload.get("pest", "알 수 없는 해충")
-    crop = payload.get("crop", "알 수 없는 작물")
-    region = payload.get("region", "지역 미지정")
+    pest = payload.pest
+    crop = payload.crop
+    region = payload.region
     
     # 2. 백엔드 LangGraph 엔진을 통해 병렬 데이터 수집 및 분석결과(LLM 결과) 생성
     analysis_result = await run_diagnosis(pest, crop, region)
@@ -59,7 +70,7 @@ async def create_diagnosis_history(
         crop=crop,
         region=region,
         analysis_result=analysis_result,
-        image_url=payload.get("image_url")
+        image_url=payload.image_url
     )
     db.add(new_history)
     await db.commit()
@@ -120,7 +131,7 @@ async def get_chat_messages(
 @router.post("/history/{history_id}/chat")
 async def add_chat_message(
     history_id: int,
-    payload: dict,
+    payload: CreateChatMessageRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -136,8 +147,8 @@ async def add_chat_message(
     # 1. 사용자 메시지 저장
     new_msg = DiagnosisChatMessage(
         diagnosis_id=history_id,
-        role=payload.get("role", "user"),
-        content=payload.get("content", "")
+        role="user",
+        content=payload.content
     )
     db.add(new_msg)
     await db.commit()
@@ -154,16 +165,13 @@ async def add_chat_message(
         db_msgs = hist_res.scalars().all()
         
         # LLM 호출 준비
-        import os
+        from app.core.config import settings
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
         from langchain_core.output_parsers import StrOutputParser
         
-        from dotenv import load_dotenv
-        load_dotenv()
-        
-        api_key = os.getenv("OPENROUTER_API_KEY", "dummy")
-        model_name = os.getenv("OPENROUTER_PEST_RAG_MODEL", "openai/gpt-4o")
+        api_key = settings.OPENROUTER_API_KEY
+        model_name = settings.OPENROUTER_PEST_RAG_MODEL
         
         ai_reply = "API 키가 없어 답변할 수 없습니다."
         if api_key != "dummy" and api_key:
@@ -171,7 +179,7 @@ async def add_chat_message(
                 llm = ChatOpenAI(
                     model=model_name,
                     api_key=api_key,
-                    base_url=os.getenv("OPENROUTER_URL", "https://litellm.lilpa.moe/v1"),
+                    base_url=settings.OPENROUTER_URL,
                     temperature=0.3
                 )
                 

@@ -58,7 +58,8 @@ async def fetch_weather(state: DiagnosisState) -> dict:
         if now - cached_time < WEATHER_CACHE_TTL:
             return {"weather_data": cached_data}
             
-    api_key = os.getenv("WEATHER_API_KEY")
+    from app.core.config import settings
+    api_key = settings.WEATHER_API_KEY
     if not api_key:
         return {"weather_data": {"temperature": "에러", "humidity": "-", "wind_speed": "-", "precipitation_prob": "-"}}
 
@@ -115,7 +116,8 @@ async def fetch_ncpms(state: DiagnosisState) -> dict:
         if now - cached_time < NCPMS_CACHE_TTL:
             return {"ncpms_data": cached_data}
 
-    api_key = os.getenv("NCPMS_API_KEY")
+    from app.core.config import settings
+    api_key = settings.NCPMS_API_KEY
     if not api_key: 
         return {"ncpms_data": "NCPMS API 키(`NCPMS_API_KEY`)가 설정되지 않았습니다."}
 
@@ -289,11 +291,12 @@ async def fetch_pesticide(state: DiagnosisState) -> dict:
         return {"pesticide_data": "[]"}
 
 async def generate_diagnosis(state: DiagnosisState) -> dict:
-    api_key = os.getenv("OPENROUTER_API_KEY", "dummy_key")
-    model_name = os.getenv("OPENROUTER_PEST_RAG_MODEL", "openai/gpt-5-nano")
-    
+    from app.core.config import settings
+    api_key = settings.OPENROUTER_API_KEY
+    model_name = settings.OPENROUTER_PEST_RAG_MODEL
+
     # API 키가 없거나 dummy일 경우 목업 데이터 반환
-    if api_key == "dummy_key" or not api_key:
+    if api_key == "dummy" or not api_key:
         fallback_json = {
             "result_text": "API 키가 설정되지 않아 가데이터를 출력합니다."
         }
@@ -302,7 +305,7 @@ async def generate_diagnosis(state: DiagnosisState) -> dict:
     llm = ChatOpenAI(
         model=model_name,
         api_key=api_key,
-        base_url=os.getenv("OPENROUTER_URL", "https://litellm.lilpa.moe/v1"),
+        base_url=settings.OPENROUTER_URL,
         temperature=0.0
     )
 
@@ -435,11 +438,15 @@ async def generate_diagnosis(state: DiagnosisState) -> dict:
         
         json_text = json.dumps(json_payload, ensure_ascii=False)
 
-        raw_response = await chain.ainvoke({
+        # Cloudflare 504 타임아웃 우회를 위한 스트리밍(Chunk) 수신 방식 적용
+        raw_response = ""
+        async for chunk in chain.astream({
             "history": "과거 대화 내역 없음",
             "user_question": f"{state.get('crop')} {state.get('pest')} 방제 방법 알려줘",
             "json_text": json_text
-        })
+        }):
+            raw_response += chunk
+
         # Remove any unfilled brackets if left behind
         response = re.sub(r'\[\[.*?\]\]', '', raw_response)
         

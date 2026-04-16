@@ -28,6 +28,17 @@ class DiagnosisHistory(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "pest": self.pest,
+            "crop": self.crop,
+            "region": self.region,
+            "analysis_result": self.analysis_result,
+            "image_url": self.image_url,
+            "date": self.created_at.strftime("%Y-%m-%d %H:%M"),
+        }
+
 class DiagnosisChatMessage(Base):
     __tablename__ = "diagnosis_chat_messages"
 
@@ -47,10 +58,8 @@ class DiagnosisChatMessage(Base):
     def to_dict(self):
         return {
             "id": self.id,
-            "pest": self.pest,
-            "crop": self.crop,
-            "region": self.region,
-            "analysis_result": self.analysis_result,
-            "image_url": self.image_url,
+            "diagnosis_id": self.diagnosis_id,
+            "role": self.role,
+            "content": self.content,
             "date": self.created_at.strftime("%Y-%m-%d %H:%M"),
         }
