@@ -1,5 +1,6 @@
 // Design Ref: §4.3 — useManualControl 훅
 import { useState, useEffect, useCallback, useRef } from 'react';
+import toast from 'react-hot-toast';
 import type { ManualControlState, ControlCommand, ControlEvent } from '@/types';
 
 const API_BASE = 'https://iot.lilpa.moe/api/v1';
@@ -47,8 +48,20 @@ export function useManualControl() {
         action,
         source: 'manual',
       }),
-    }).catch(() => {
-      fetchState();
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.detail || body.message || `제어 요청 실패 (${res.status})`);
+        fetchState();
+        return Promise.reject(new Error(body.detail || `HTTP ${res.status}`));
+      }
+      return res;
+    }).catch((err) => {
+      if (err instanceof TypeError) {
+        toast.error('서버에 연결할 수 없습니다');
+        fetchState();
+      }
+      throw err;
     });
   }, [fetchState]);
 
@@ -140,7 +153,14 @@ export function useManualControl() {
         state: toggleState,
         source: 'button',
       }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.detail || body.message || `시뮬레이션 요청 실패 (${res.status})`);
+        fetchState();
+      }
     }).catch(() => {
+      toast.error('서버에 연결할 수 없습니다');
       fetchState();
     });
   }, [controlState, fetchState]);
@@ -163,7 +183,14 @@ export function useManualControl() {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'omit',
       body: JSON.stringify({ control_type: controlType }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.detail || body.message || `잠금 해제 실패 (${res.status})`);
+        fetchState();
+      }
     }).catch(() => {
+      toast.error('서버에 연결할 수 없습니다');
       fetchState();
     });
   }, [fetchState]);

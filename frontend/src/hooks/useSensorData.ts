@@ -83,39 +83,59 @@ export function useSensorData() {
     eventSourceRef.current = es;
 
     es.addEventListener('sensor', (e) => {
-      const reading = JSON.parse(e.data) as SensorReading;
-      setData(prev => ({
-        ...prev,
-        latest: reading,
-        history: [...prev.history.slice(-(99)), reading],
-        connected: true,
-      }));
+      try {
+        const reading = JSON.parse(e.data) as SensorReading;
+        setData(prev => ({
+          ...prev,
+          latest: reading,
+          history: [...prev.history.slice(-(99)), reading],
+          connected: true,
+        }));
+      } catch (err) {
+        console.warn('[SSE] sensor parse error:', err);
+      }
     });
 
     es.addEventListener('alert', (e) => {
-      const alert = JSON.parse(e.data) as SensorAlert;
-      setData(prev => ({
-        ...prev,
-        alerts: [alert, ...prev.alerts],
-      }));
+      try {
+        const alert = JSON.parse(e.data) as SensorAlert;
+        setData(prev => ({
+          ...prev,
+          alerts: [alert, ...prev.alerts],
+        }));
+      } catch (err) {
+        console.warn('[SSE] alert parse error:', err);
+      }
     });
 
     es.addEventListener('irrigation', (e) => {
-      const event = JSON.parse(e.data) as IrrigationEvent;
-      setData(prev => ({
-        ...prev,
-        irrigations: [event, ...prev.irrigations],
-      }));
+      try {
+        const event = JSON.parse(e.data) as IrrigationEvent;
+        setData(prev => ({
+          ...prev,
+          irrigations: [event, ...prev.irrigations],
+        }));
+      } catch (err) {
+        console.warn('[SSE] irrigation parse error:', err);
+      }
     });
 
     es.addEventListener('control', (e) => {
-      const controlEvent = JSON.parse(e.data) as ControlEvent;
-      _controlHandlers.forEach(handler => handler(controlEvent));
+      try {
+        const controlEvent = JSON.parse(e.data) as ControlEvent;
+        _controlHandlers.forEach(handler => handler(controlEvent));
+      } catch (err) {
+        console.warn('[SSE] control parse error:', err);
+      }
     });
 
     es.addEventListener('ai_decision', (e) => {
-      const decision = JSON.parse(e.data);
-      _aiDecisionHandlers.forEach(handler => handler(decision));
+      try {
+        const decision = JSON.parse(e.data);
+        _aiDecisionHandlers.forEach(handler => handler(decision));
+      } catch (err) {
+        console.warn('[SSE] ai_decision parse error:', err);
+      }
     });
 
     es.onopen = () => {

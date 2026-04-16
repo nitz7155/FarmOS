@@ -44,6 +44,13 @@ function LedIndicator({ on }: { on: boolean }) {
   );
 }
 
+const ACCENT_CLASSES: Record<string, string> = {
+  'blue-500': 'accent-blue-500',
+  'amber-500': 'accent-amber-500',
+  'emerald-500': 'accent-emerald-500',
+  'orange-500': 'accent-orange-500',
+};
+
 /** 슬라이더: 드래그 중은 로컬 state, 놓으면 서버 전송 */
 function ControlSlider({
   value,
@@ -66,6 +73,11 @@ function ControlSlider({
     }
   }, [value, dragging]);
 
+  const commit = useCallback(() => {
+    setDragging(false);
+    onChange(localValue);
+  }, [localValue, onChange]);
+
   return (
     <input
       type="range"
@@ -78,15 +90,10 @@ function ControlSlider({
         setLocalValue(v);
         setDragging(true);
       }}
-      onMouseUp={() => {
-        setDragging(false);
-        onChange(localValue);
-      }}
-      onTouchEnd={() => {
-        setDragging(false);
-        onChange(localValue);
-      }}
-      className={`w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-${color}`}
+      onMouseUp={commit}
+      onTouchEnd={commit}
+      onBlur={commit}
+      className={`w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer ${ACCENT_CLASSES[color] || ''}`}
       disabled={disabled}
     />
   );
@@ -397,16 +404,20 @@ export default function ManualControlPanel() {
           <div className="grid grid-cols-4 gap-2">
             {(['ventilation', 'irrigation', 'lighting', 'shading'] as const).map((ct) => {
               const labels = { ventilation: '환기', irrigation: '관수', lighting: '조명', shading: '차광' };
-              const colors = { ventilation: 'blue', irrigation: 'cyan', lighting: 'amber', shading: 'emerald' };
+              const activeStyles: Record<string, string> = {
+                ventilation: 'bg-blue-100 border-blue-400 text-blue-700',
+                irrigation: 'bg-cyan-100 border-cyan-400 text-cyan-700',
+                lighting: 'bg-amber-100 border-amber-400 text-amber-700',
+                shading: 'bg-emerald-100 border-emerald-400 text-emerald-700',
+              };
               const isActive = controlState[ct].active;
-              const color = colors[ct];
               return (
                 <button
                   key={ct}
                   onClick={() => simulateButton(ct)}
                   className={`py-2.5 rounded-lg text-sm font-medium transition-all border-2 ${
                     isActive
-                      ? `bg-${color}-100 border-${color}-400 text-${color}-700`
+                      ? activeStyles[ct]
                       : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
                   }`}
                 >
