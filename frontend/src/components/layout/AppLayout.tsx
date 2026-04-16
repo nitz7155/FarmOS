@@ -1,4 +1,4 @@
-import { Outlet, useLocation } from 'react-router-dom';
+﻿import { Outlet, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
@@ -6,7 +6,7 @@ import MobileNav from './MobileNav';
 
 const PAGE_TITLES: Record<string, string> = {
   '/': '대시보드',
-  '/diagnosis': '병해충 AI 진단',
+  '/diagnosis': '해충 AI 진단',
   '/iot': 'IoT 센서 대시보드',
   '/reviews': '리뷰 분석 리포트',
   '/documents': '행정 서류 자동 생성',

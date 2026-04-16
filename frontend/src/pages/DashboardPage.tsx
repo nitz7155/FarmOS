@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+﻿import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useScenario } from '@/context/ScenarioContext';
 import { useAuth } from '@/context/AuthContext';
@@ -18,7 +18,7 @@ const STATIC_MODULES: ModuleInfo[] = [
   {
     to: '/diagnosis',
     icon: '/images/icons/diagnosis.jpg',
-    label: '병해충 AI 진단',
+    label: '해충 AI 진단',
     color: 'bg-red-50 text-red-600',
     summary: '진단 기능 준비 완료',
     status: { color: 'bg-green-400', text: '준비', textColor: 'text-green-700', bgColor: 'bg-green-50' },

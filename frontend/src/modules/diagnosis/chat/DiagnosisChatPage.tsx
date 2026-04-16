@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MdSend, MdArrowBack, MdRefresh, MdSmartToy, MdPerson } from 'react-icons/md';
@@ -271,7 +271,7 @@ export default function DiagnosisChatPage() {
           <MdArrowBack className="text-xl" />
         </button>
         <div className="flex flex-col items-center">
-          <h2 className="font-bold text-gray-800">병해충 AI 진단 센터</h2>
+          <h2 className="font-bold text-gray-800">해충 AI 진단 센터</h2>
           <p className="text-[10px] text-primary font-bold uppercase tracking-wider">AI AGENT ACTIVE</p>
         </div>
         <button onClick={() => window.location.reload()} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">

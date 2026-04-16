@@ -1,9 +1,9 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+﻿import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 
 const NAV_ITEMS = [
   { to: '/', icon: '/images/icons/dashboard.jpg', label: '대시보드' },
-  { to: '/diagnosis', icon: '/images/icons/diagnosis.jpg', label: '병해충 진단' },
+  { to: '/diagnosis', icon: '/images/icons/diagnosis.jpg', label: '해충 진단' },
   { to: '/iot', icon: '/images/icons/iot-sensors.jpg', label: 'IoT 센서' },
   { to: '/reviews', icon: '/images/icons/reviews.jpg', label: '리뷰 분석' },
   { to: '/documents', icon: '/images/icons/documents.jpg', label: '행정 서류' },

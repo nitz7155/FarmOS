@@ -1,4 +1,4 @@
-import type { ScenarioEvent, AppNotification } from '@/types';
+﻿import type { ScenarioEvent, AppNotification } from '@/types';
 
 export const SCENARIO_EVENTS: ScenarioEvent[] = [
   {
@@ -18,7 +18,7 @@ export const SCENARIO_EVENTS: ScenarioEvent[] = [
   {
     day: 7,
     module: 'diagnosis',
-    title: '사과 잎 사진 → AI 병해충 진단',
+    title: '사과 잎 사진 → AI 해충 진단',
     description: '사과나무 잎 사진을 촬영하여 AI 진단을 실행합니다. 점무늬낙엽병(중증)으로 진단되고 방제법이 추천됩니다.',
     route: '/diagnosis',
   },
@@ -90,7 +90,7 @@ export const SCENARIO_NOTIFICATIONS: AppNotification[] = [
   {
     id: 'noti-004',
     type: 'danger',
-    title: '병해충 진단 결과',
+    title: '해충 진단 결과',
     message: '점무늬낙엽병(중증) 발견. 즉시 방제가 필요합니다.',
     timestamp: '2026-03-07T10:15:00',
     module: 'diagnosis',

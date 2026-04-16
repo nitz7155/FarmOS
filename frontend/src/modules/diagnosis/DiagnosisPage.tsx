@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+﻿import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MdCameraAlt, MdHistory, MdCheckCircle, MdChat, MdInfoOutline, MdDeleteOutline } from 'react-icons/md';
@@ -30,7 +30,7 @@ const TIPS = [
   "서로 다른 약제를 혼용할 때는 반드시 제품 라벨의 혼용 가이드를 확인하세요.",
   "비가 온 직후에는 병해가 확산될 수 있으니 작물을 꼼꼼히 살피세요.",
   "농약은 권장 희석 배수를 정확히 지켜야 작물 약해를 예방할 수 있습니다.",
-  "병해충 방제는 예찰을 통한 초기 대응이 가장 효과적입니다.",
+  "해충 방제는 예찰을 통한 초기 대응이 가장 효과적입니다.",
   "수확을 앞둔 작물은 잔류 농약 안전 기준을 위해 사용 가능 시기를 꼭 확인하세요.",
   "노린재류는 주로 아침, 저녁 시간에 잎 뒷면에 숨어 활동합니다.",
   "시설 하우스에서는 주기적인 환기로 습도를 낮춰 곰팡이병을 예방하세요.",
