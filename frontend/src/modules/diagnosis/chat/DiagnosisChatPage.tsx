@@ -105,6 +105,15 @@ function MarkdownRenderer({ content }: { content: string }) {
         continue;
       }
 
+      // HTML 태그 (CSS 카드 형태 등)
+      if (line.trim().startsWith('<')) {
+        while (nestedLevel > 0) { result.push('</ul></li>'); nestedLevel--; }
+        if (inList) { result.push('</ul>'); inList = false; }
+        const formatted = line.replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold">$1</strong>');
+        result.push(line);
+        continue;
+      }
+
       // 일반 텍스트
       if (line.trim()) {
         while (nestedLevel > 0) { result.push('</ul></li>'); nestedLevel--; }

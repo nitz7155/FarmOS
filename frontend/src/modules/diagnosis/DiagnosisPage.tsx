@@ -1,9 +1,10 @@
-﻿import { useState, useCallback, useEffect } from 'react';
+﻿import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MdCameraAlt, MdHistory, MdCheckCircle, MdChat, MdInfoOutline, MdDeleteOutline } from 'react-icons/md';
+import { MdCameraAlt, MdHistory, MdCheckCircle, MdChat, MdInfoOutline, MdDeleteOutline, MdSearch } from 'react-icons/md';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import DaumPostcode from 'react-daum-postcode';
 
 const REGIONS = [
   "서울", "인천", "대전", "대구", "광주", "부산", "울산", "세종",
@@ -38,6 +39,17 @@ const TIPS = [
   "기상청 데이터 연동을 통해 현재 날씨에 맞는 최적의 살포 시기를 추천합니다."
 ];
 
+const LOADING_MESSAGES = [
+  "진단 이미지 특징점 전처리 중...",
+  "AI 모델 기반 해충 탐지 수행 중...",
+  "해충 데이터베이스와 대조 중...",
+  "NCPMS 방제 지침 데이터 연동 중...",
+  "농약 처방 데이터베이스 대조 중...",
+  "기상청 데이터 기반 방제 적합도 분석 중...",
+  "최적의 농약 정보 검색 중...",
+  "최종 진단 리포트 생성 중..."
+];
+
 export default function DiagnosisPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -46,10 +58,57 @@ export default function DiagnosisPage() {
   const [selectedCrop, setSelectedCrop] = useState("");
   const [testPest, setTestPest] = useState(PESTS[1]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisStep, setAnalysisStep] = useState(0);
   const [randomTip, setRandomTip] = useState(TIPS[0]);
+  const [loadingMessage, setLoadingMessage] = useState(LOADING_MESSAGES[0]);
   const [history, setHistory] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  
+  const [isPostcodeOpen, setIsPostcodeOpen] = useState(false);
+  
+  const handleCompletePostcode = (data: any) => {
+    let fullAddress = data.address;
+    let extraAddress = '';
+
+    if (data.addressType === 'R') {
+      if (data.bname !== '') {
+        extraAddress += data.bname;
+      }
+      if (data.buildingName !== '') {
+        extraAddress += extraAddress !== '' ? `, ${data.buildingName}` : data.buildingName;
+      }
+      fullAddress += extraAddress !== '' ? ` (${extraAddress})` : '';
+    }
+
+    setSelectedRegion(fullAddress);
+    setIsPostcodeOpen(false);
+  };
+  
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const cancelDiagnosis = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setIsAnalyzing(false);
+  };
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isAnalyzing) {
+      interval = setInterval(() => {
+        setLoadingMessage(prev => {
+          let nextIndex = Math.floor(Math.random() * LOADING_MESSAGES.length);
+          while (LOADING_MESSAGES[nextIndex] === prev) {
+            nextIndex = Math.floor(Math.random() * LOADING_MESSAGES.length);
+          }
+          return LOADING_MESSAGES[nextIndex];
+        });
+      }, 2500);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isAnalyzing]);
 
   const fetchHistory = async () => {
     try {
@@ -64,7 +123,10 @@ export default function DiagnosisPage() {
 
   useEffect(() => {
     if (user) {
-      const displayRegion = user.location_category || "서울";
+      // 프론트엔드의 user 객체에는 실제 DB의 location 필드가 포함되어 있습니다.
+      // 짧게 변환된 location_category 대신, 상세 주소가 포함된 원본 location을 사용하여
+      // 카카오 지오코딩 및 기상청 연동에 필요한 전체 좌표 정보를 얻습니다.
+      const displayRegion = user.location || "";
       setSelectedRegion(displayRegion);
       setSelectedCrop(user.main_crop || "배추");
       fetchHistory();
@@ -120,26 +182,22 @@ export default function DiagnosisPage() {
     }
   };
 
-  const startDiagnosis = (isTest = false) => {
+  const startDiagnosis = async (isTest = false) => {
+    if (!selectedRegion && !isTest) {
+      alert("정확한 기상청 데이터 연동을 위해 주소를 입력해주세요.");
+      setIsPostcodeOpen(true);
+      return;
+    }
+
     setIsAnalyzing(true);
-    setAnalysisStep(0);
     setRandomTip(TIPS[Math.floor(Math.random() * TIPS.length)]);
+    setLoadingMessage(LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)]);
 
-    const steps = [
-      "이미지 특징점 추출 중...",
-      "해충 데이터베이스 매칭 중...",
-      "AI 모델 분석 결과 생성 중...",
-      "작물 및 기상 데이터 결합 중..."
-    ];
-
-    let currentStep = 0;
-    // API 실제 호출 시간에 맞춰 로딩 표기를 순환 (최소한 1번씩은 보여주도록)
-    const interval = setInterval(() => {
-      currentStep = (currentStep + 1);
-      if (currentStep < steps.length - 1) {
-        setAnalysisStep(currentStep);
-      }
-    }, 2000);
+    // 기존 진행 중인 요청 캔슬 및 새 AbortController 할당
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
 
     const payload = {
       pest: isTest ? testPest : "벼룩잎벌레",
@@ -147,30 +205,36 @@ export default function DiagnosisPage() {
       region: selectedRegion || "서울"
     };
 
-    // 실시간으로 API 호출 연동, 딜레이 없이 바로 요청
-    fetch(`${API_BASE}/history`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload)
-    })
-    .then(async (res) => {
-      clearInterval(interval);
-      setAnalysisStep(steps.length - 1); // 마지막 단계 도달
-      
+    // 일반 POST 응답 처리
+    try {
+      const res = await fetch(`${API_BASE}/history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+        signal: abortControllerRef.current.signal
+      });
+
       if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.detail || 'Save failed');
+        throw new Error('Save failed');
       }
+
       const savedData = await res.json();
       await fetchHistory();
-      navigate('/diagnosis/chat', { state: { diagnosisContext: savedData } });
-    })
-    .catch(err => {
+      
+      // savedData가 객체인지, 내부에 data 필드를 주는지 상황에 맞추어 넘겨줍니다.
+      navigate('/diagnosis/chat', { state: { diagnosisContext: savedData.data || savedData } });
+      
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log("Diagnosis aborted by user");
+        return;
+      }
       console.error("Save error:", err);
-      clearInterval(interval);
       navigate('/diagnosis/chat', { state: { diagnosisContext: payload } });
-    });
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const onDrop = useCallback(() => {
@@ -183,7 +247,7 @@ export default function DiagnosisPage() {
     maxFiles: 1,
   });
 
-  const isAutoFilled = user?.location && user?.main_crop;
+  const isAutoFilled = user?.location_category && user?.main_crop;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20">
@@ -202,16 +266,44 @@ export default function DiagnosisPage() {
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-gray-400 ml-1">지역 (기상청 연동)</label>
-            <select 
-              value={selectedRegion} 
-              onChange={(e) => setSelectedRegion(e.target.value)}
-              className="w-full p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary/20 transition-all outline-none cursor-pointer"
-            >
-              <option value="" disabled>지역 선택</option>
-              {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
+          <div className="space-y-1.5 flex flex-col">
+            <label className="text-xs font-bold text-gray-400 ml-1">지역/상세주소 (기상청 연동)</label>
+            <div className="flex gap-2">
+              <input 
+                type="text"
+                readOnly
+                placeholder="주소를 검색하세요"
+                value={selectedRegion}
+                onClick={() => setIsPostcodeOpen(true)}
+                className="w-full p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary/20 transition-all outline-none cursor-pointer"
+              />
+              <button 
+                onClick={() => setIsPostcodeOpen(true)}
+                className="bg-primary text-white p-3 rounded-xl font-bold flex items-center justify-center shadow hover:bg-primary/90 transition-colors"
+                title="주소 찾기"
+              >
+                <MdSearch className="text-xl" />
+              </button>
+            </div>
+            
+            {isPostcodeOpen && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 overflow-hidden flex flex-col">
+                  <div className="flex justify-between items-center p-4 border-b border-gray-100">
+                    <h3 className="font-bold text-gray-800 text-lg">주소 검색</h3>
+                    <button 
+                      onClick={() => setIsPostcodeOpen(false)}
+                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      ✕ 닫기
+                    </button>
+                  </div>
+                  <div className="w-full h-[400px]">
+                    <DaumPostcode onComplete={handleCompletePostcode} style={{ height: '100%' }} />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-gray-400 ml-1">작물 (농약 안전정보 연동)</label>
@@ -403,23 +495,10 @@ export default function DiagnosisPage() {
                 </div>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <h2 className="text-2xl font-bold text-gray-800">AI 분석 진행 중</h2>
-                <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-primary"
-                    initial={{ width: '0%' }}
-                    animate={{ width: '100%' }}
-                    transition={{ duration: 6 }}
-                  />
-                </div>
                 <p className="text-primary font-medium animate-pulse">
-                  { [
-                    '이미지 특징점 추출 중...',
-                    '해충 데이터베이스 매칭 중...',
-                    'AI 모델 분석 결과 생성 중...',
-                    '작물 및 기상 데이터 결합 중...'
-                  ][analysisStep] }
+                  {loadingMessage}
                 </p>
               </div>
 
@@ -428,6 +507,15 @@ export default function DiagnosisPage() {
                   <span className="font-bold text-primary block mb-1">💡 알고 계셨나요?</span>
                   {randomTip}
                 </p>
+              </div>
+
+              <div className="pt-4">
+                <button
+                  onClick={cancelDiagnosis}
+                  className="px-6 py-2.5 bg-white text-gray-500 font-bold rounded-xl border border-gray-200 shadow-sm hover:bg-gray-50 hover:text-red-500 transition-all"
+                >
+                  진단 취소 및 돌아가기
+                </button>
               </div>
             </div>
           </motion.div>

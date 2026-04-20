@@ -49,6 +49,8 @@ async def get_diagnosis_history(
         } for h in histories
     ]
 
+
+
 @router.post("/history")
 async def create_diagnosis_history(
     payload: CreateDiagnosisHistoryRequest,
@@ -60,41 +62,54 @@ async def create_diagnosis_history(
     pest = payload.pest
     crop = payload.crop
     region = payload.region
-    
-    # 2. 백엔드 LangGraph 엔진을 통해 병렬 데이터 수집 및 분석결과(LLM 결과) 생성
-    analysis_result = await run_diagnosis(pest, crop, region)
 
-    new_history = DiagnosisHistory(
-        user_id=current_user.id,
-        pest=pest,
-        crop=crop,
-        region=region,
-        analysis_result=analysis_result,
-        image_url=payload.image_url
-    )
-    db.add(new_history)
-    await db.commit()
-    await db.refresh(new_history)
+    final_result = None
     
-    parsed_text = analysis_result.get("result_text", "")
-    if parsed_text:
-        initial_msg = DiagnosisChatMessage(
-            diagnosis_id=new_history.id,
-            role="assistant",
-            content=parsed_text
+    # LangGraph 오케스트레이션 수행 결과 대기 (스트림 제외, 최종 결과만 획득)
+    async for node_name, state_data in run_diagnosis(pest, crop, region):
+        if node_name == "generate_diagnosis":
+            final_result = state_data.get("analysis_result")
+
+    if not final_result:
+        raise HTTPException(status_code=500, detail="진단 결과 생성에 실패했습니다.")
+
+    try:
+        new_history = DiagnosisHistory(
+            user_id=current_user.id,
+            pest=pest,
+            crop=crop,
+            region=region,
+            analysis_result=final_result,
+            image_url=payload.image_url
         )
-        db.add(initial_msg)
+        db.add(new_history)
         await db.commit()
-    
-    return {
-        "id": new_history.id,
-        "pest": new_history.pest,
-        "crop": new_history.crop,
-        "region": new_history.region,
-        "analysis_result": new_history.analysis_result,
-        "image_url": new_history.image_url,
-        "created_at": new_history.created_at.isoformat()
-    }
+        await db.refresh(new_history)
+
+        parsed_text = final_result.get("result_text", "")
+        if parsed_text:
+            initial_msg = DiagnosisChatMessage(
+                diagnosis_id=new_history.id,
+                role="assistant",
+                content=parsed_text
+            )
+            db.add(initial_msg)
+            await db.commit()
+
+        return {
+            "type": "done",
+            "data": {
+                "id": new_history.id,
+                "pest": new_history.pest,
+                "crop": new_history.crop,
+                "region": new_history.region,
+                "analysis_result": new_history.analysis_result,
+                "image_url": new_history.image_url,
+                "created_at": new_history.created_at.isoformat()
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB 저장 중 오류 발생: {str(e)}")
 
 @router.get("/history/{history_id}/chat")
 async def get_chat_messages(

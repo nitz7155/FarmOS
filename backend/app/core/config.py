@@ -47,10 +47,11 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL: str = "google/gemma-4-31b-it"
     OPENROUTER_PEST_RAG_MODEL: str = "openai/gpt-4o"
 
-    # 외부 데이터 API (기상청, NCPMS, 농약안전정보시스템)
+    # 외부 데이터 API (기상청, NCPMS, 농약안전정보시스템, 카카오)
     WEATHER_API_KEY: str = ""
     NCPMS_API_KEY: str = ""
     PESTICIDE_API_KEY: str = ""
+    KAKAO_REST_API_KEY: str = ""
 
     # Groq (Whisper STT)
     GROQ_API_KEY: str = ""
