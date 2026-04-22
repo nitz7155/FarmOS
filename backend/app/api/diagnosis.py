@@ -221,7 +221,14 @@ async def add_chat_message(
                     base_url=settings.OPENROUTER_URL,
                     temperature=0.0,
                     http_async_client=custom_async_client,
-                    model_kwargs={"extra_body": {"include_reasoning": False}}
+                    model_kwargs={
+                        "extra_body": {
+                            "include_reasoning": False,
+                            "reasoning": {
+                                "effort": "none"
+                            }
+                        }
+                    }
                 )
                 
                 # 시스템 프롬프트 구성 (전문 농업 진단사 역할)

@@ -643,7 +643,14 @@ async def generate_diagnosis(state: DiagnosisState) -> dict:
         temperature=0.0,
         max_retries=2,
         http_async_client=custom_async_client,
-        model_kwargs={"extra_body": {"include_reasoning": False}}
+        model_kwargs={
+            "extra_body": {
+                "include_reasoning": False,
+                "reasoning": {
+                    "effort": "none"
+                }
+            }
+        }
     )
 
     try:
