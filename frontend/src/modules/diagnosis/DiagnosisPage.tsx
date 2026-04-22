@@ -66,6 +66,12 @@ export default function DiagnosisPage() {
   const [history, setHistory] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   
+  // 페이징 관련 상태
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+  const totalPages = Math.ceil(history.length / itemsPerPage);
+  const currentItems = history.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
   const [isPostcodeOpen, setIsPostcodeOpen] = useState(false);
   const postcodeCloseButtonRef = useRef<HTMLButtonElement | null>(null);
   
@@ -131,15 +137,24 @@ export default function DiagnosisPage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === history.length) {
-      setSelectedIds([]);
+    const currentIds = currentItems.map(h => h.id);
+    const allCurrentSelected = currentIds.length > 0 && currentIds.every(id => selectedIds.includes(id));
+    
+    if (allCurrentSelected) {
+      // 현재 페이지의 모든 항목이 선택되어 있다면, 현재 페이지 항목만 선택 해제
+      setSelectedIds(prev => prev.filter(id => !currentIds.includes(id)));
     } else {
-      setSelectedIds(history.map(h => h.id));
+      // 그렇지 않다면 현재 페이지의 모든 항목을 추가 (중복 제거)
+      setSelectedIds(prev => Array.from(new Set([...prev, ...currentIds])));
     }
   };
 
   const deleteSelected = async () => {
     if (selectedIds.length === 0) return;
+    
+    if (!window.confirm(`선택한 ${selectedIds.length}개의 진단 기록을 모두 삭제하시겠습니까?`)) {
+      return;
+    }
     
     try {
       await Promise.all(
@@ -159,6 +174,9 @@ export default function DiagnosisPage() {
 
   const deleteOne = async (e: React.MouseEvent, id: number) => {
     e.stopPropagation();
+    if (!window.confirm('이 진단 기록을 삭제하시겠습니까?')) {
+      return;
+    }
     try {
       const response = await fetch(`${API_BASE}/history/${id}`, {
         method: 'DELETE',
@@ -464,11 +482,21 @@ export default function DiagnosisPage() {
           
           {history.length > 0 && (
             <div className="flex items-center gap-3">
+              {selectedIds.length > 0 && (
+                <button 
+                  onClick={() => setSelectedIds([])}
+                  className="text-xs font-bold text-red-400 hover:text-red-600 transition-colors cursor-pointer mr-2"
+                >
+                  선택 해제 ({selectedIds.length})
+                </button>
+              )}
               <button 
                 onClick={toggleSelectAll}
                 className="text-xs font-bold text-gray-400 hover:text-primary transition-colors cursor-pointer"
               >
-                {selectedIds.length === history.length ? "전체 해제" : "전체 선택"}
+                {currentItems.length > 0 && currentItems.every(id => selectedIds.includes(id.id)) 
+                  ? "전체 해제" 
+                  : "전체 선택"}
               </button>
               {selectedIds.length > 0 && (
                 <button 
@@ -488,74 +516,124 @@ export default function DiagnosisPage() {
             <div className="py-20 text-center bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
               <p className="text-gray-400 text-sm">최근 진단 내역이 없습니다.</p>
             </div>
-          ) : history.map(record => (
-            <div
-              key={record.id}
-              className={`group relative w-full text-left p-4 rounded-2xl border transition-all cursor-default flex items-center justify-between shadow-sm
-                ${selectedIds.includes(record.id) 
-                  ? 'border-primary bg-primary/5 ring-1 ring-primary/20' 
-                  : 'border-primary/20 bg-white'
-                }`}
-            >
-              <div className="flex items-center gap-4 flex-1">
-                <div 
-                  onClick={(e) => toggleSelect(e, record.id)}
-                  className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all flex-shrink-0 cursor-pointer
+          ) : (
+            <>
+              {currentItems.map(record => (
+                <div
+                  key={record.id}
+                  className={`group relative w-full text-left p-4 rounded-2xl border transition-all cursor-default flex items-center justify-between shadow-sm
                     ${selectedIds.includes(record.id) 
-                      ? 'bg-primary border-primary text-white scale-110' 
-                      : 'bg-white border-primary/40'
+                      ? 'border-primary bg-primary/5 ring-1 ring-primary/20' 
+                      : 'border-primary/20 bg-white hover:border-primary/40'
                     }`}
                 >
-                  {selectedIds.includes(record.id) && <MdCheckCircle className="text-lg" />}
-                </div>
+                  <div className="flex items-center gap-4 flex-1">
+                    <div 
+                      onClick={(e) => toggleSelect(e, record.id)}
+                      className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all flex-shrink-0 cursor-pointer
+                        ${selectedIds.includes(record.id) 
+                          ? 'bg-primary border-primary text-white scale-110' 
+                          : 'bg-white border-primary/40'
+                        }`}
+                    >
+                      {selectedIds.includes(record.id) && <MdCheckCircle className="text-lg" />}
+                    </div>
 
-                <div 
-                  className="flex-1 space-y-1 cursor-pointer group/content"
-                  onClick={() => navigate('/diagnosis/chat', { 
-                    state: { 
-                      diagnosisContext: record,
-                      fromHistory: true 
-                    } 
-                  })}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-primary text-white transition-colors">
-                      {record.crop}
-                    </span>
-                    <span className="font-bold text-primary transition-colors">
-                      {record.pest}
-                    </span>
+                    <div 
+                      className="flex-1 space-y-1 cursor-pointer group/content"
+                      onClick={() => navigate('/diagnosis/chat', { 
+                        state: { 
+                          diagnosisContext: record,
+                          fromHistory: true 
+                        } 
+                      })}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-primary text-white transition-colors">
+                          {record.crop}
+                        </span>
+                        <span className="font-bold text-primary transition-colors">
+                          {record.pest}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        {record.region} · {record.date ? record.date : new Date(record.created_at).toLocaleDateString()} 
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-xs text-gray-400">
-                    {record.region} · {record.date ? record.date : new Date(record.created_at).toLocaleDateString()} 
-                  </p>
-                </div>
-              </div>
 
-              <div className="flex items-center gap-3">
-                <button 
-                  onClick={(e) => deleteOne(e, record.id)}
-                  className="w-9 h-9 rounded-xl flex items-center justify-center text-red-500 bg-red-50 border border-red-100 transition-all cursor-pointer hover:border-red-500"
-                  title="기록 삭제"
-                >
-                  <MdDeleteOutline className="text-xl" />
-                </button>
-                
-                <div 
-                  className="flex items-center justify-center w-10 h-10 rounded-full transition-all shadow-sm bg-green-50 text-primary cursor-pointer border border-green-100 hover:border-primary"
-                  onClick={() => navigate('/diagnosis/chat', { 
-                    state: { 
-                      diagnosisContext: record,
-                      fromHistory: true 
-                    } 
-                  })}
-                  title="진단 상세 채팅"
-                >
-                  <MdChat className="text-xl" />
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={(e) => deleteOne(e, record.id)}
+                      className="w-9 h-9 rounded-xl flex items-center justify-center text-red-500 bg-red-50 border border-red-100 transition-all cursor-pointer hover:border-red-500"
+                      title="기록 삭제"
+                    >
+                      <MdDeleteOutline className="text-xl" />
+                    </button>
+                    
+                    <div 
+                      className="flex items-center justify-center w-10 h-10 rounded-full transition-all shadow-sm bg-green-50 text-primary cursor-pointer border border-green-100 hover:border-primary"
+                      onClick={() => navigate('/diagnosis/chat', { 
+                        state: { 
+                          diagnosisContext: record,
+                          fromHistory: true 
+                        } 
+                      })}
+                      title="진단 상세 채팅"
+                    >
+                      <MdChat className="text-xl" />
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          ))}
+              ))}
+
+              {/* 페이지네이션 UI */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-2 mt-6 py-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="p-2 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  >
+                    이전
+                  </button>
+                  
+                  <div className="flex items-center gap-1">
+                    {[...Array(totalPages)].map((_, i) => {
+                      const pageNum = i + 1;
+                      // 너무 많은 페이지 번호 방지 (현재 페이지 주변만 표시)
+                      if (totalPages > 5 && Math.abs(pageNum - currentPage) > 2 && pageNum !== 1 && pageNum !== totalPages) {
+                        if (pageNum === 2 || pageNum === totalPages - 1) return <span key={pageNum} className="px-1 text-gray-300">...</span>;
+                        return null;
+                      }
+                      
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`w-8 h-8 rounded-lg font-bold text-xs transition-all ${
+                            currentPage === pageNum 
+                              ? 'bg-primary text-white shadow-md shadow-primary/20 scale-110' 
+                              : 'text-gray-400 hover:bg-gray-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="p-2 rounded-lg border border-gray-200 text-gray-400 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                  >
+                    다음
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 
