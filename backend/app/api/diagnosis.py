@@ -1,5 +1,7 @@
 import logging
 import httpx
+import json
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,7 +48,6 @@ async def get_diagnosis_history(
     result = await db.execute(query)
     histories = result.scalars().all()
     
-    # 딕셔너리 변환 시 to_dict()가 구현되어 있다고 가정 (또는 직접 구성)
     return [
         {
             "id": h.id,
@@ -59,23 +60,18 @@ async def get_diagnosis_history(
         } for h in histories
     ]
 
-
-
 @router.post("/history")
 async def create_diagnosis_history(
     payload: CreateDiagnosisHistoryRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """진단 결과 저장 (VLM 완료 후 호출 -> LangGraph 오케스트레이션 진행)."""
-    # 프론트에서 받은 순수 키워드
+    """진단 결과 저장."""
     pest = payload.pest
     crop = payload.crop
     region = payload.region
-
     final_result: dict | None = None
 
-    # LangGraph 오케스트레이션 수행 결과 대기 (스트림 제외, 최종 결과만 획득)
     try:
         async for node_name, state_data in run_diagnosis(pest, crop, region):
             if node_name == "generate_diagnosis":
@@ -84,10 +80,7 @@ async def create_diagnosis_history(
                     final_result = analysis_result
     except Exception as e:
         logger.exception("진단 워크플로우 실행 실패")
-        raise HTTPException(
-            status_code=500,
-            detail="진단 결과 생성에 실패했습니다.",
-        ) from e
+        raise HTTPException(status_code=500, detail="진단 결과 생성에 실패했습니다.") from e
 
     if not final_result or not final_result.get("result_text"):
         raise HTTPException(status_code=500, detail="진단 결과 생성에 실패했습니다.")
@@ -127,9 +120,7 @@ async def create_diagnosis_history(
                 "created_at": new_history.created_at.isoformat()
             }
         }
-    except HTTPException:
-        raise
-    except SQLAlchemyError as e:
+    except Exception as e:
         logger.exception("Diagnosis history 저장 실패")
         raise HTTPException(status_code=500, detail="DB 저장 중 오류가 발생했습니다.") from e
 
@@ -140,7 +131,6 @@ async def get_chat_messages(
     current_user: User = Depends(get_current_user)
 ):
     """특정 진단 기록에 연결된 모든 채팅 메시지 조회."""
-    # 먼저 해당 진단 기록이 본인 것인지 확인
     check_query = select(DiagnosisHistory).where(
         (DiagnosisHistory.id == history_id) & (DiagnosisHistory.user_id == current_user.id)
     )
@@ -173,7 +163,6 @@ async def add_chat_message(
     current_user: User = Depends(get_current_user)
 ):
     """채팅 메시지 추가."""
-    # 권한 확인
     check_query = select(DiagnosisHistory).where(
         (DiagnosisHistory.id == history_id) & (DiagnosisHistory.user_id == current_user.id)
     )
@@ -182,7 +171,6 @@ async def add_chat_message(
     if not history:
         raise HTTPException(status_code=404, detail="진단 기록을 찾을 수 없습니다.")
 
-    # 1. 사용자 메시지 저장
     new_msg = DiagnosisChatMessage(
         diagnosis_id=history_id,
         role="user",
@@ -192,23 +180,19 @@ async def add_chat_message(
     await db.commit()
     await db.refresh(new_msg)
     
-    # 사용자가 보낸 메시지인 경우에만 AI 답변 생성
     if new_msg.role == "user":
-        # 기존 대화 내역 조회
         hist_query = select(DiagnosisChatMessage).where(
             DiagnosisChatMessage.diagnosis_id == history_id
         ).order_by(asc(DiagnosisChatMessage.created_at))
         hist_res = await db.execute(hist_query)
         db_msgs = hist_res.scalars().all()
         
-        # LLM 호출 준비
         api_key = settings.OPENROUTER_API_KEY
         model_name = settings.OPENROUTER_PEST_RAG_MODEL
         
         ai_reply = "API 키가 없어 답변할 수 없습니다."
-        if api_key != "dummy" and api_key:
+        if api_key and api_key != "dummy":
             try:
-                # httpx를 통해 HTTP/1.1 강제로 Cloudflare의 HTTP/2 버그(RemoteProtocolError) 원천 차단
                 custom_async_client = httpx.AsyncClient(
                     http1=True,
                     http2=False,
@@ -231,8 +215,6 @@ async def add_chat_message(
                     }
                 )
                 
-                # 시스템 프롬프트 구성 (전문 농업 진단사 역할)
-                # 진단 대상 정보를 프롬프트에 명시적으로 추가하여 컨텍스트 강화 및 간결함 요구
                 system_content = (
                     f"당신은 전문 식물 의사 및 농업 컨설턴트입니다.\n"
                     f"현재 진단 대상: {history.crop} ({history.pest})\n"
@@ -241,26 +223,19 @@ async def add_chat_message(
                     "전문 용어를 사용하되 설명은 쉽게 해주세요. 이전 대화 맥락을 기억하고 이어나가세요."
                 )
                 
-                chat_msgs = [
-                    SystemMessage(content=system_content)
-                ]
-                
-                # 대화 기록 변환
+                chat_msgs = [SystemMessage(content=system_content)]
                 for m in db_msgs:
                     if m.role == "user":
                         chat_msgs.append(HumanMessage(content=m.content))
                     elif m.role == "assistant":
                         chat_msgs.append(AIMessage(content=m.content))
                         
-                # 답변 생성
                 chain = llm | StrOutputParser()
                 ai_reply = await chain.ainvoke(chat_msgs)
             except Exception as e:
-                print(f"Chat generation error: {e}")
                 logger.error(f"Chat generation error for history {history_id}: {e}", exc_info=True)
                 ai_reply = "AI 답변 생성 중 오류가 발생했습니다."
 
-        # 2. AI 메시지 저장
         ai_msg = DiagnosisChatMessage(
             diagnosis_id=history_id,
             role="assistant",
@@ -285,14 +260,7 @@ async def add_chat_message(
             }
         }
     
-    return {
-        "user_msg": {
-            "id": new_msg.id,
-            "role": new_msg.role,
-            "content": new_msg.content,
-            "created_at": new_msg.created_at.isoformat()
-        }
-    }
+    return {"user_msg": {"id": new_msg.id, "role": new_msg.role, "content": new_msg.content}}
 
 @router.delete("/history/{history_id}")
 async def delete_diagnosis_history(
@@ -300,19 +268,11 @@ async def delete_diagnosis_history(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """진단 기록 하드 딜리트."""
-    # 본인 것인지 확인 후 삭제
     query = delete(DiagnosisHistory).where(
-        (DiagnosisHistory.id == history_id) & 
-        (DiagnosisHistory.user_id == current_user.id)
+        (DiagnosisHistory.id == history_id) & (DiagnosisHistory.user_id == current_user.id)
     )
     result = await db.execute(query)
-    
     if result.rowcount == 0:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="기록을 찾을 수 없거나 삭제 권한이 없습니다."
-        )
-        
+        raise HTTPException(status_code=404, detail="기록을 찾을 수 없거나 삭제 권한이 없습니다.")
     await db.commit()
     return {"status": "success", "message": f"History {history_id} deleted."}

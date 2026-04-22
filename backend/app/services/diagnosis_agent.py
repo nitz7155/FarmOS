@@ -635,7 +635,6 @@ async def generate_diagnosis(state: DiagnosisState) -> dict:
         http2=False,
         timeout=httpx.Timeout(180.0, connect=20.0)
     )
-
     llm = ChatOpenAI(
         model=model_name,
         api_key=api_key,
