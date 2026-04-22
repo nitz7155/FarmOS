@@ -66,6 +66,7 @@ export default function DiagnosisPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   
   const [isPostcodeOpen, setIsPostcodeOpen] = useState(false);
+  const postcodeCloseButtonRef = useRef<HTMLButtonElement | null>(null);
   
   const handleCompletePostcode = (data: DaumPostcodeData) => {
     setSelectedRegion(formatDaumAddress(data));
@@ -75,9 +76,8 @@ export default function DiagnosisPage() {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const cancelDiagnosis = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setIsAnalyzing(false);
   };
 
@@ -186,7 +186,8 @@ export default function DiagnosisPage() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
-    abortControllerRef.current = new AbortController();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     if (!isTest) {
       toast('현재 이미지 자동 판독(VLM) 연동 전입니다. 선택된 해충으로 임시 진단합니다.', {
@@ -207,7 +208,7 @@ export default function DiagnosisPage() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload),
-        signal: abortControllerRef.current.signal
+        signal: controller.signal
       });
 
       if (!res.ok) {
@@ -228,13 +229,34 @@ export default function DiagnosisPage() {
       console.error("Save error:", err);
       navigate('/diagnosis/chat', { state: { diagnosisContext: payload } });
     } finally {
-      setIsAnalyzing(false);
+      // 최신 요청의 종료에서만 로딩 상태를 내린다.
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+        setIsAnalyzing(false);
+      }
     }
   };
 
+  useEffect(() => {
+    if (isPostcodeOpen) {
+      postcodeCloseButtonRef.current?.focus();
+    }
+  }, [isPostcodeOpen]);
+
+  useEffect(() => {
+    if (!isPostcodeOpen) return;
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsPostcodeOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [isPostcodeOpen]);
+
   const onDrop = useCallback(() => {
     startDiagnosis(false);
-  }, [selectedCrop, selectedRegion]);
+  }, [selectedCrop, selectedRegion, testPest]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -270,23 +292,45 @@ export default function DiagnosisPage() {
                 placeholder="주소를 검색하세요"
                 value={selectedRegion}
                 onClick={() => setIsPostcodeOpen(true)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setIsPostcodeOpen(true);
+                  }
+                }}
+                tabIndex={0}
                 className="w-full p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary/20 transition-all outline-none cursor-pointer"
               />
               <button 
+                type="button"
                 onClick={() => setIsPostcodeOpen(true)}
                 className="bg-primary text-white p-3 rounded-xl font-bold flex items-center justify-center shadow hover:bg-primary/90 transition-colors"
                 title="주소 찾기"
+                aria-label="주소 찾기"
               >
                 <MdSearch className="text-xl" />
               </button>
             </div>
             
             {isPostcodeOpen && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-                <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 overflow-hidden flex flex-col">
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+                role="presentation"
+                onClick={() => setIsPostcodeOpen(false)}
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="diagnosis-postcode-modal-title"
+                  className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 overflow-hidden flex flex-col"
+                  onClick={(event) => event.stopPropagation()}
+                >
                   <div className="flex justify-between items-center p-4 border-b border-gray-100">
-                    <h3 className="font-bold text-gray-800 text-lg">주소 검색</h3>
+                    <h3 id="diagnosis-postcode-modal-title" className="font-bold text-gray-800 text-lg">주소 검색</h3>
                     <button 
+                      type="button"
+                      ref={postcodeCloseButtonRef}
+                      aria-label="주소 검색 닫기"
                       onClick={() => setIsPostcodeOpen(false)}
                       className="text-gray-400 hover:text-gray-600 transition-colors"
                     >

@@ -75,18 +75,7 @@ async def run_ncpms_seed(_db_conf: dict[str, str]) -> None:
     async with async_session() as db:
         count_result = await db.execute(select(func.count()).select_from(NcpmsDiagnosis))
         current_count = int(count_result.scalar() or 0)
-
-        if current_count >= len(payload):
-            info(
-                f"NCPMS 데이터가 이미 로드되어 있습니다. "
-                f"(DB {current_count}건 / JSON {len(payload)}건) - 중복 적재를 스킵합니다."
-            )
-            return
-        if current_count > 0:
-            info(
-                f"NCPMS 데이터가 일부 로드되어 있습니다. ({current_count}건). "
-                "중단된 위치부터 병합(UPSERT)을 재개합니다."
-            )
+        info(f"NCPMS 적재 시작 (DB {current_count}건 -> JSON {len(payload)}건, UPSERT)")
 
         batch_size = 500
         for i in range(0, len(payload), batch_size):

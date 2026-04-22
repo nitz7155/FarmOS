@@ -16,9 +16,9 @@ function MarkdownRenderer({ content }: { content: string }) {
   const parseMarkdown = (text: string): string => {
     const normalizeLegacyPlaceholders = (value: string): string =>
       value
-        .replace(/(?:\\)?\{\{\s*PEST_IDENTIFICATION_LINE\s*\}\}|(?:\\)?\{\s*PEST_IDENTIFICATION_LINE\s*\}|PEST_IDENTIFICATION_LINE/g, '🔍 입력하신 이미지는 해충으로 인식되었습니다. 이를 기반으로 답변하겠습니다.')
-        .replace(/(?:\\)?\{\{\s*PESTICIDE_HTML\s*\}\}|(?:\\)?\{\s*PESTICIDE_HTML\s*\}|PESTICIDE_HTML/g, '<p class="my-2 text-gray-400 italic">권장 농약 정보가 누락되었습니다.</p>')
-        .replace(/(?:\\)?\{\{\s*WEATHER_HTML\s*\}\}|(?:\\)?\{\s*WEATHER_HTML\s*\}|WEATHER_HTML/g, '<p class="my-2 text-gray-400 italic">날씨 정보를 불러오지 못했습니다.</p>');
+        .replace(/(?:\\)?\{\{\s*PEST_IDENTIFICATION_LINE\s*\}\}|(?:\\)?\{\s*PEST_IDENTIFICATION_LINE\s*\}|^PEST_IDENTIFICATION_LINE$/gm, '🔍 입력하신 이미지는 해충으로 인식되었습니다. 이를 기반으로 답변하겠습니다.')
+        .replace(/(?:\\)?\{\{\s*PESTICIDE_HTML\s*\}\}|(?:\\)?\{\s*PESTICIDE_HTML\s*\}|^PESTICIDE_HTML$/gm, '<p class="my-2 text-gray-400 italic">권장 농약 정보가 누락되었습니다.</p>')
+        .replace(/(?:\\)?\{\{\s*WEATHER_HTML\s*\}\}|(?:\\)?\{\s*WEATHER_HTML\s*\}|^WEATHER_HTML$/gm, '<p class="my-2 text-gray-400 italic">날씨 정보를 불러오지 못했습니다.</p>');
 
     // 텍스트 전처리: LLM이 평문으로 응답할 경우를 대비해 특정 패턴에 마크다운 기호 주입
     let processedText = normalizeLegacyPlaceholders(text)

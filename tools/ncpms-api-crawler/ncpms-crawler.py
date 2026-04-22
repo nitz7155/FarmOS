@@ -19,6 +19,8 @@ load_dotenv(dotenv_path=env_path)
 API_KEY = os.environ.get("NCPMS_API_KEY", "")
 BASE_URL = "http://ncpms.rda.go.kr/npmsAPI/service"
 REQUEST_DELAY_SECONDS = 0.2
+FALLBACK_CROP_NAME = "fallback"
+_DETAILS_CACHE: dict[str, dict[str, str]] = {}
 
 
 def build_session() -> requests.Session:
@@ -81,7 +83,18 @@ def fetch_api_text(params: dict[str, str]) -> str:
     return text
 
 
-def fetch_details(insect_key):
+def fetch_details(insect_key: str) -> dict[str, str]:
+    empty_info = {
+        "preventMethod": "",
+        "ecologyInfo": "",
+        "biologyPrvnbeMth": "",
+        "chemicalPrvnbeMth": "",
+    }
+    if not insect_key:
+        return empty_info
+    if insect_key in _DETAILS_CACHE:
+        return _DETAILS_CACHE[insect_key]
+
     detail_params = {
         "apiKey": API_KEY, "serviceCode": "SVC07", "serviceType": "AA003", "insectKey": insect_key
     }
@@ -89,9 +102,9 @@ def fetch_details(insect_key):
         text = fetch_api_text(detail_params)
     except requests.RequestException as exc:
         print(f"상세 API 요청 에러(insectKey={insect_key}): {exc}")
-        return {"preventMethod": "", "ecologyInfo": "", "biologyPrvnbeMth": "", "chemicalPrvnbeMth": ""}
+        return empty_info
 
-    info = {"preventMethod": "", "ecologyInfo": "", "biologyPrvnbeMth": "", "chemicalPrvnbeMth": ""}
+    info = empty_info.copy()
     
     if text.startswith("{"):
         try:
@@ -103,9 +116,15 @@ def fetch_details(insect_key):
             info["preventMethod"] = remove_html_tags_from_api_text(svc.get("preventMethod", ""))
         except json.JSONDecodeError as exc:
             print(f"상세 JSON 파싱 실패(insectKey={insect_key}): {exc}")
+
+    _DETAILS_CACHE[insect_key] = info
     return info
 
 def main():
+    if not API_KEY:
+        print("ERROR: NCPMS_API_KEY가 설정되지 않았습니다. .env 또는 환경변수를 확인하세요.")
+        raise SystemExit(1)
+
     results = []
     
     for pest, crops in PEST_CROP_MAPPINGS.items():
@@ -166,10 +185,10 @@ def main():
             details = fetch_details(fallback_key)
             results.append({
                 "pest_name": pest,
-                "crop_name": "fallback",
+                "crop_name": FALLBACK_CROP_NAME,
                 **details
             })
-            print(f" -> 작물없음(Fallback) 추출 완료")
+            print(" -> 작물없음(Fallback) 추출 완료")
             
         # 각 타겟 작물별 추출
         for crop in crops:

@@ -59,7 +59,4 @@ async def drop_all():
 
 if __name__ == "__main__":
     _confirm_reset()
-    try:
-        asyncio.run(drop_all())
-    except Exception:
-        raise SystemExit(1)
+    asyncio.run(drop_all())

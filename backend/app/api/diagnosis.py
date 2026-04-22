@@ -67,14 +67,23 @@ async def create_diagnosis_history(
     crop = payload.crop
     region = payload.region
 
-    final_result = None
-    
-    # LangGraph 오케스트레이션 수행 결과 대기 (스트림 제외, 최종 결과만 획득)
-    async for node_name, state_data in run_diagnosis(pest, crop, region):
-        if node_name == "generate_diagnosis":
-            final_result = state_data.get("analysis_result")
+    final_result: dict | None = None
 
-    if not final_result:
+    # LangGraph 오케스트레이션 수행 결과 대기 (스트림 제외, 최종 결과만 획득)
+    try:
+        async for node_name, state_data in run_diagnosis(pest, crop, region):
+            if node_name == "generate_diagnosis":
+                analysis_result = state_data.get("analysis_result")
+                if isinstance(analysis_result, dict):
+                    final_result = analysis_result
+    except Exception as e:
+        logger.exception("진단 워크플로우 실행 실패")
+        raise HTTPException(
+            status_code=500,
+            detail="진단 결과 생성에 실패했습니다.",
+        ) from e
+
+    if not final_result or not final_result.get("result_text"):
         raise HTTPException(status_code=500, detail="진단 결과 생성에 실패했습니다.")
 
     try:

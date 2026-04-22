@@ -32,6 +32,7 @@ weather_cache = {} # key: region -> (timestamp_sec, data_str)
 
 NCPMS_CACHE_TTL = 30 * 24 * 3600  # 30일
 WEATHER_CACHE_TTL = 3 * 3600      # 3시간
+FALLBACK_CROP_NAME = "fallback"
 
 import math
 import urllib.parse
@@ -538,7 +539,7 @@ async def fetch_ncpms(state: DiagnosisState) -> dict:
             if not row:
                 fallback_query = select(NcpmsDiagnosis).where(
                     NcpmsDiagnosis.pest_name == pest,
-                    NcpmsDiagnosis.crop_name == "fallback"
+                    NcpmsDiagnosis.crop_name == FALLBACK_CROP_NAME
                 )
                 result = await db.execute(fallback_query)
                 row = result.scalars().first()
