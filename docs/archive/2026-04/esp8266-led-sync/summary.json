@@ -1,0 +1,56 @@
+{
+  "feature": "esp8266-led-sync",
+  "phase": "archived",
+  "matchRate": 94.2,
+  "iterationCount": 0,
+  "sessionCount": 7,
+  "sessions": [
+    "S2 module-poll",
+    "S3 module-report",
+    "S1 module-bootstrap",
+    "S4 module-glue",
+    "S4.1 wifi-3tier-retry",
+    "S4.2 connectivity-watchdog",
+    "S5 module-polish"
+  ],
+  "startedAt": "2026-04-21T00:00:00Z",
+  "completedAt": "2026-04-21T23:59:00Z",
+  "archivedAt": "2026-04-21T23:59:00Z",
+  "archivedTo": "docs/archive/2026-04/esp8266-led-sync/",
+  "targetFiles": [
+    "FarmOS/DH11_KY018_WiFi/DH11_KY018_WiFi.ino"
+  ],
+  "linesChanged": {
+    "before": 224,
+    "after": 478,
+    "delta": 254
+  },
+  "successCriteria": {
+    "total": 6,
+    "met": 5,
+    "partial": 1,
+    "notMet": 0,
+    "deferred": ["SC-6 24h heap stability"]
+  },
+  "decisions": {
+    "transport": "HTTP polling 2s",
+    "architecture": "Option C Pragmatic Balance",
+    "buttonSemantic": "toggle",
+    "localWebserver": "removed",
+    "connectivityWatchdog": "30s timeout -> ESP.restart()"
+  },
+  "positiveDeviations": [
+    "Connectivity Watchdog added (not in original Plan)",
+    "3-tier WiFi retry (reconnect x3 -> disconnect+begin inf) — stronger than Plan FR-09",
+    "Non-blocking debounce via millis() instead of delay()"
+  ],
+  "relatedFeatures": [
+    "iot-manual-control (server + frontend prerequisite)"
+  ],
+  "followupCandidates": [
+    "24h stress test (SC-6 closure)",
+    "OTA firmware update pipeline",
+    "Irrigation physical button",
+    "ESP32 TLS migration"
+  ]
+}

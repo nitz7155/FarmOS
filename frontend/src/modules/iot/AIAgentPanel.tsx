@@ -1,4 +1,11 @@
-import { useState } from 'react';
+// Design Ref §5 — AI Agent 제어 패널.
+// agent-action-history (module-4) 통합:
+//  - 상단에 AIActivitySummaryCards 삽입
+//  - 최근 판단 row click → AIDecisionDetailModal
+//  - 기존 "전체 N건 보기" 인라인 펼침 → "더보기(cursor pagination)" 버튼
+
+import { useEffect, useRef, useState } from 'react';
+import toast from 'react-hot-toast';
 import {
   MdSmartToy,
   MdAir,
@@ -8,10 +15,16 @@ import {
   MdSettings,
   MdHistory,
   MdAutoAwesome,
+  MdExpandMore,
 } from 'react-icons/md';
-import type { AIAgentStatus, AIDecision } from '@/types';
+import type { AIDecision } from '@/types';
 import CropProfileModal from './CropProfileModal';
+import AIActivitySummaryCards from './AIActivitySummaryCards';
+import AIDecisionDetailModal from './AIDecisionDetailModal';
 import { useAIAgent } from '@/hooks/useAIAgent';
+import DateRangeFilter, {
+  type DateRangeValue,
+} from '@/components/DateRangeFilter';
 
 function PriorityBadge({ priority }: { priority: string }) {
   const colors: Record<string, string> = {
@@ -70,25 +83,41 @@ function ControlCard({
   );
 }
 
-function DecisionItem({ decision }: { decision: AIDecision }) {
-  const [showTrace, setShowTrace] = useState(false);
-  const time = new Date(decision.timestamp).toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+// Design Ref §5.3 — row 전체 클릭 시 모달. 인라인 tool_calls 펼침은 제거됨.
+function DecisionRow({
+  decision,
+  onOpen,
+}: {
+  decision: AIDecision;
+  onOpen: (id: string) => void;
+}) {
+  // 년-월-일 시:분 (24h). ko-KR locale 의 기본 포맷("2026. 04. 22. 14:30") 대신
+  // 공백/구분자를 가지런히 직접 포맷.
+  const d = new Date(decision.timestamp);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
   const typeLabels: Record<string, string> = {
     ventilation: '환기',
     irrigation: '관수',
     lighting: '조명',
     shading: '차광/보온',
   };
-
-  const hasTrace = decision.tool_calls && decision.tool_calls.length > 0;
+  const toolCount = decision.tool_calls?.length ?? 0;
 
   return (
-    <div className="py-2.5 border-b border-gray-100 last:border-0">
+    <button
+      type="button"
+      data-testid="ai-decision-row"
+      onClick={() => onOpen(decision.id)}
+      className="w-full text-left py-2.5 border-b border-gray-100 last:border-0 hover:bg-white/60 rounded px-1 transition-colors"
+    >
       <div className="flex items-start gap-3">
-        <span className="text-xs text-gray-400 mt-0.5 shrink-0 w-12">{time}</span>
+        <div className="shrink-0 w-[88px] mt-0.5 leading-tight">
+          <div className="text-[11px] text-gray-500 font-mono">{dateStr}</div>
+          <div className="text-[11px] text-gray-400 font-mono">{timeStr}</div>
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium text-gray-800">
@@ -96,45 +125,103 @@ function DecisionItem({ decision }: { decision: AIDecision }) {
             </span>
             <PriorityBadge priority={decision.priority} />
             <SourceBadge source={decision.source} />
-            {hasTrace && (
-              <button
-                onClick={() => setShowTrace(!showTrace)}
-                className="text-xs text-indigo-500 hover:text-indigo-700 underline"
-              >
-                {showTrace ? '추적 닫기' : `도구 호출 ${decision.tool_calls!.length}건`}
-              </button>
+            {toolCount > 0 && (
+              <span className="text-[10px] text-indigo-500">· 도구 {toolCount}</span>
             )}
           </div>
-          <p className="text-xs text-gray-500 mt-1 leading-relaxed">{decision.reason}</p>
+          <p className="text-xs text-gray-500 mt-1 leading-relaxed line-clamp-2">
+            {decision.reason}
+          </p>
         </div>
       </div>
-      {showTrace && decision.tool_calls && (
-        <div className="ml-14 mt-2 space-y-1.5">
-          {decision.tool_calls.map((tc, i) => (
-            <div key={i} className="text-xs bg-gray-50 rounded p-2 font-mono">
-              <span className="text-indigo-600 font-semibold">{tc.tool}</span>
-              {Object.keys(tc.arguments).length > 0 && (
-                <span className="text-gray-500 ml-1">
-                  ({Object.entries(tc.arguments).map(([k, v]) => `${k}: ${v}`).join(', ')})
-                </span>
-              )}
-              {tc.result?.success !== undefined && (
-                <span className={`ml-2 ${tc.result.success ? 'text-green-600' : 'text-red-600'}`}>
-                  {tc.result.success ? 'OK' : 'FAIL'}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </button>
   );
 }
 
 export default function AIAgentPanel() {
-  const { status, decisions, loading, toggle, updateCropProfile } = useAIAgent();
+  const {
+    status,
+    decisions,
+    loading,
+    toggle,
+    updateCropProfile,
+    // agent-action-history
+    summary,
+    summaryRange,
+    summaryLoading,
+    fetchSummary,
+    hasMore,
+    listLoading,
+    fetchMore,
+    fetchDetail,
+    setDateRange,
+  } = useAIAgent();
+
   const [profileOpen, setProfileOpen] = useState(false);
-  const [showAllDecisions, setShowAllDecisions] = useState(false);
+
+  // 최근 판단 날짜 범위 필터 상태 — 기본값: 전체(필터 없음)
+  const [decisionRange, setDecisionRange] = useState<DateRangeValue>({
+    since: null,
+    until: null,
+    preset: 'all',
+  });
+  const handleRangeChange = (v: DateRangeValue) => {
+    setDecisionRange(v);
+    setDateRange(v.since, v.until);
+  };
+
+  // 상세 모달 상태
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailDecision, setDetailDecision] = useState<AIDecision | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  // closeDetail 의 모달 unmount 지연 timeout id 보관 — 빠른 재호출/언마운트 시 stale setState 방지.
+  const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const openDetail = async (id: string) => {
+    const cached = decisions.find((d) => d.id === id) ?? null;
+    setDetailDecision(cached);
+    setDetailError(null);
+    setDetailOpen(true);
+    setDetailLoading(true);
+    try {
+      const fresh = await fetchDetail(id);
+      if (fresh) {
+        setDetailDecision(fresh);
+      } else if (!cached) {
+        setDetailError('해당 판단을 찾을 수 없습니다 (삭제되었거나 30일이 지났을 수 있습니다).');
+      }
+    } catch (e) {
+      console.error('[AIAgentPanel] openDetail 실패', e);
+      setDetailError('판단 상세를 불러오지 못했습니다. 네트워크 상태를 확인해 주세요.');
+      toast.error('판단 상세를 불러오지 못했습니다.');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const closeDetail = () => {
+    setDetailOpen(false);
+    // 약간의 애니메이션 여유 후 초기화. 이전 예약이 살아있으면 clear 후 재예약.
+    if (closeTimeoutRef.current !== null) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+    closeTimeoutRef.current = setTimeout(() => {
+      setDetailDecision(null);
+      setDetailError(null);
+      closeTimeoutRef.current = null;
+    }, 150);
+  };
+
+  // 컴포넌트 언마운트 시 close 지연 timeout 정리 — stale setState 경고 방지.
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current !== null) {
+        clearTimeout(closeTimeoutRef.current);
+        closeTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -161,7 +248,7 @@ export default function AIAgentPanel() {
 
   return (
     <>
-      <div className="card space-y-5">
+      <div className="card space-y-5" data-testid="ai-agent-panel">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -202,6 +289,14 @@ export default function AIAgentPanel() {
             {crop_profile.name} / {crop_profile.growth_stage} / 적정 {crop_profile.optimal_temp[0]}~{crop_profile.optimal_temp[1]}C
           </span>
         </div>
+
+        {/* agent-action-history — 요약 카드 */}
+        <AIActivitySummaryCards
+          summary={summary}
+          range={summaryRange}
+          loading={summaryLoading}
+          onRangeChange={(r) => fetchSummary(r)}
+        />
 
         {/* 4대 제어 카드 */}
         {status.enabled ? (
@@ -292,31 +387,50 @@ export default function AIAgentPanel() {
           </div>
         )}
 
-        {/* 최근 판단 이력 */}
-        {status.enabled && decisions.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <MdHistory className="text-gray-400" />
-                <span className="text-sm font-semibold text-gray-700">최근 판단</span>
-                <span className="text-xs text-gray-400">({status.total_decisions}건)</span>
-              </div>
-              {decisions.length > 5 && (
-                <button
-                  onClick={() => setShowAllDecisions(!showAllDecisions)}
-                  className="text-xs text-blue-500 hover:text-blue-700"
-                >
-                  {showAllDecisions ? '접기' : `전체 ${decisions.length}건 보기`}
-                </button>
-              )}
+        {/* 최근 판단 — 상세 모달 + 더보기. AI Agent 활성 여부와 무관하게 상시 표시. */}
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <MdHistory className="text-gray-400" />
+              <span className="text-sm font-semibold text-gray-700">최근 판단</span>
+              <span className="text-xs text-gray-400">
+                (표시 {decisions.length}건)
+              </span>
             </div>
-            <div className="bg-gray-50 rounded-xl p-3 max-h-80 overflow-y-auto">
-              {(showAllDecisions ? decisions : decisions.slice(0, 5)).map(d => (
-                <DecisionItem key={d.id} decision={d} />
-              ))}
-            </div>
+            <DateRangeFilter value={decisionRange} onChange={handleRangeChange} />
           </div>
-        )}
+          <div className="bg-gray-50 rounded-xl p-2 max-h-96 overflow-y-auto">
+            {decisions.length === 0 ? (
+              <p className="py-6 text-xs text-gray-400 text-center">
+                아직 기록된 판단 내역이 없습니다.
+              </p>
+            ) : (
+              <>
+                {decisions.map((d) => (
+                  <DecisionRow key={d.id} decision={d} onOpen={openDetail} />
+                ))}
+                {hasMore && (
+                  <div className="pt-2 pb-1 flex justify-center">
+                    <button
+                      data-testid="ai-more-btn"
+                      onClick={() => fetchMore()}
+                      disabled={listLoading || loading}
+                      className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 disabled:text-gray-400"
+                    >
+                      <MdExpandMore className="text-base" />
+                      {listLoading ? '불러오는 중…' : '더보기'}
+                    </button>
+                  </div>
+                )}
+                {!hasMore && decisions.length > 5 && (
+                  <p className="pt-2 pb-1 text-[11px] text-gray-400 text-center">
+                    모든 이력을 불러왔습니다
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* 작물 프로필 모달 */}
@@ -325,6 +439,15 @@ export default function AIAgentPanel() {
         onClose={() => setProfileOpen(false)}
         current={crop_profile}
         onSave={updateCropProfile}
+      />
+
+      {/* 판단 상세 모달 */}
+      <AIDecisionDetailModal
+        open={detailOpen}
+        decision={detailDecision}
+        loading={detailLoading}
+        error={detailError}
+        onClose={closeDetail}
       />
     </>
   );

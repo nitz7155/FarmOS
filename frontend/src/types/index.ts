@@ -423,6 +423,7 @@ export interface ControlItemState {
 export interface VentilationState extends ControlItemState {
   window_open_pct: number;
   fan_speed: number;
+  on: boolean; // Design Ref: §3.1 — 마스터 스위치 (ESP8266 active와 별개)
 }
 
 export interface IrrigationControlState extends ControlItemState {
@@ -440,6 +441,7 @@ export interface LightingState extends ControlItemState {
 export interface ShadingState extends ControlItemState {
   shade_pct: number;
   insulation_pct: number;
+  on: boolean; // Design Ref: §3.1 — 마스터 스위치
 }
 
 export interface ManualControlState {
@@ -481,6 +483,15 @@ export interface ToolCallTrace {
   result: Record<string, unknown>;
 }
 
+// turn 단위 판단 흐름 — LLM 의 reasoning + 그 turn 에서 호출한 tool 묶음.
+// is_summary=true 는 루프 종료 후 강제 생성된 종합 요약 turn (tool_calls 비어 있음).
+export interface ReasoningTurn {
+  turn: number;
+  reasoning: string;
+  tool_calls: ToolCallTrace[];
+  is_summary?: boolean;
+}
+
 export interface AIDecision {
   id: string;
   timestamp: string;
@@ -489,7 +500,40 @@ export interface AIDecision {
   reason: string;
   priority: string;
   source: "rule" | "llm" | "manual" | "tool";
-  tool_calls?: ToolCallTrace[];
+  // 과거 레코드는 ToolCallTrace[] 평탄형, 현재는 ReasoningTurn[] turn형.
+  // DB 리셋 전까지 두 shape 이 섞일 수 있음 — 모달에서 분기 렌더링.
+  tool_calls?: Array<ToolCallTrace | ReasoningTurn>;
+  // Design Ref §3.1 — agent-action-history 확장 (Bridge 적재 시 채워짐)
+  sensor_snapshot?: {
+    temperature?: number;
+    humidity?: number;
+    light_intensity?: number;
+    soil_moisture?: number;
+    timestamp?: string;
+    [k: string]: unknown;
+  };
+  duration_ms?: number;
+  created_at?: string;
+}
+
+// Design Ref §3.1, §4.1 — 요약 응답
+export interface ActivitySummary {
+  range: "today" | "7d" | "30d";
+  total: number;
+  by_control_type: Record<string, number>;
+  by_source: Record<string, number>;
+  by_priority: Record<string, number>;
+  avg_duration_ms: number | null;
+  latest_at: string | null;
+  generated_at: string;
+}
+
+// Design Ref §4.2 — 목록 + (timestamp, id) 복합 keyset pagination 응답
+export interface DecisionListResponse {
+  items: AIDecision[];
+  next_cursor: string | null;
+  next_cursor_id: string | null;
+  has_more: boolean;
 }
 
 export interface CropProfile {

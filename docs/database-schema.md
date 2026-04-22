@@ -17,8 +17,12 @@
 | 영역 | 저장 방식 | 사유 |
 |------|----------|------|
 | 사용자 인증 | **PostgreSQL** | 영속 데이터 |
-| IoT 센서 | **인메모리** (deque) | 실시간 시연용, 재시작 시 초기화 |
+| IoT 센서 | **PostgreSQL** (`iot_` 접두사 테이블) | 영속 저장, 서버 재시작 후에도 히스토리 유지 (2026-04-20 인메모리에서 전환) |
 | 쇼핑몰 | **PostgreSQL** (`shop_` 접두사 테이블) | FarmOS와 동일 DB 공유, 테이블명으로 구분 |
+
+> IoT 센서/관수/알림 데이터는 로컬 BE(`farmos` DB)와 N100 Relay(**전용 `iot-postgres` 컨테이너 / `iotdb` DB**)에 **동일한 스키마**로 저장된다.
+> 로컬 BE DB: 프론트엔드 대시보드 + AI Agent 조회 전용. N100 Relay DB: ESP8266 수신 전용.
+> N100 의 `iot-postgres` 는 기존 운영 중인 다른 Postgres 와 네트워크/볼륨/자격증명이 완전히 분리된 전용 인스턴스다.
 
 ---
 
@@ -48,15 +52,111 @@
 
 ---
 
-## 인메모리 저장소 (IoT 전용)
+## IoT 테이블 (`iot_` 접두사)
 
-> 파일: `backend/app/core/store.py` — 서버 재시작 시 초기화
+> 모델 파일: `backend/app/models/iot.py`
+> 저장소 모듈: `backend/app/core/store.py` (SQLAlchemy 2.0 async + asyncpg)
 
-| 저장소 | 자료구조 | 최대 크기 | 설명 |
-|--------|---------|----------|------|
-| `sensor_readings` | `deque` | 2,000건 | 센서 데이터 (FIFO) |
-| `irrigation_events` | `list` | 무제한 | 관개 이벤트 |
-| `sensor_alerts` | `list` | 무제한 | 센서 알림 |
+### `iot_sensor_readings`
+
+| 컬럼 | SQL Type | Null | 설명 |
+|------|----------|:----:|------|
+| id | VARCHAR(36) PK | NO | UUID4 |
+| device_id | VARCHAR(64) | NO | ESP8266 식별자 (인덱스) |
+| timestamp | TIMESTAMPTZ | NO | 센서 전송 시각 (인덱스, 조회 정렬 키) |
+| soil_moisture | FLOAT | NO | 실측 또는 추정치 |
+| temperature | FLOAT | NO |  |
+| humidity | FLOAT | NO |  |
+| light_intensity | INTEGER | NO |  |
+| created_at | TIMESTAMPTZ | NO | `now()` default |
+
+### `iot_irrigation_events`
+
+| 컬럼 | SQL Type | Null | 설명 |
+|------|----------|:----:|------|
+| id | VARCHAR(36) PK | NO | UUID4 |
+| triggered_at | TIMESTAMPTZ | NO | 이벤트 발생 시각 (인덱스) |
+| reason | VARCHAR(255) | NO | 사유 |
+| valve_action | VARCHAR(10) | NO | "열림" / "닫힘" |
+| duration | INTEGER | NO | 지속 시간(초) |
+| auto_triggered | BOOLEAN | NO | 자동 여부 |
+| created_at | TIMESTAMPTZ | NO |  |
+
+### `iot_sensor_alerts`
+
+| 컬럼 | SQL Type | Null | 설명 |
+|------|----------|:----:|------|
+| id | VARCHAR(36) PK | NO | UUID4 |
+| type | VARCHAR(32) | NO | "moisture" / "humidity" 등 |
+| severity | VARCHAR(16) | NO | "경고" / "주의" |
+| message | VARCHAR(255) | NO |  |
+| timestamp | TIMESTAMPTZ | NO | 알림 시각 (인덱스) |
+| resolved | BOOLEAN | NO | 기본 FALSE |
+| resolved_at | TIMESTAMPTZ | YES | 해결 처리 시각 |
+| created_at | TIMESTAMPTZ | NO |  |
+
+> 이전 인메모리 구조(`deque[dict]` / `list[dict]`)는 2026-04-20 PostgreSQL로 전환됨.
+> 토양 습도 시간 관성 값(`_prev_soil_moisture`)은 영속화 대상이 아니며 프로세스 스코프로 유지.
+
+---
+
+## AI Agent 테이블 (`ai_agent_` 접두사)
+
+> 모듈: `backend/app/models/ai_agent.py`
+> ORM: SQLAlchemy 2.0 (async) + asyncpg 드라이버
+> Feature: `agent-action-history` (2026-04-20)
+> 역할: N100 Relay 원본 → FarmOS 최근 30일 mirror + 일/시간 요약. 실시간 동기화는 `AiAgentBridge` 워커(SSE + HTTP backfill).
+
+### `ai_agent_decisions` (원본 미러, 최근 30일 TTL)
+
+| 컬럼 | 타입 | NULL | 설명 |
+|------|------|:----:|------|
+| id | VARCHAR(36) | NO | Relay 가 생성한 UUID 를 그대로 PK 로 재사용 |
+| timestamp | TIMESTAMPTZ | NO | AI 판단 시각 (index) |
+| control_type | VARCHAR(32) | NO | ventilation\|irrigation\|lighting\|shading (index) |
+| priority | VARCHAR(16) | NO | emergency\|high\|medium\|low |
+| source | VARCHAR(16) | NO | rule\|llm\|tool\|manual (index) |
+| reason | TEXT | NO | 판단 근거 문장 |
+| action | JSONB | NO | 실제 제어 변경 payload (default `{}`) |
+| tool_calls | JSONB | NO | 도구 호출 트레이스 배열 (default `[]`) |
+| sensor_snapshot | JSONB | YES | 판단 시점 센서 스냅샷 |
+| duration_ms | INTEGER | YES | 판단 소요 시간 |
+| created_at | TIMESTAMPTZ | NO | FarmOS insert 시각 — cursor pagination 키 (index DESC) |
+
+인덱스: `created_at DESC`, `timestamp DESC`, `control_type`, `source`.
+
+### `ai_agent_activity_daily` (일별 집계)
+
+| 컬럼 | 타입 | NULL | 설명 |
+|------|------|:----:|------|
+| day | DATE | NO | PK |
+| control_type | VARCHAR(32) | NO | PK |
+| count | INTEGER | NO | 해당 (day, control_type) 판단 건수 |
+| by_source | JSONB | NO | `{"rule":12, "llm":3, ...}` |
+| by_priority | JSONB | NO | `{"high":5, ...}` |
+| avg_duration_ms | INTEGER | YES | 가중 평균 (count 기반) |
+| last_at | TIMESTAMPTZ | YES | 마지막 판단 시각 |
+| updated_at | TIMESTAMPTZ | NO | 집계 마지막 갱신 |
+
+UPSERT 전략: Bridge 가 원본 INSERT 성공 시마다 `ON CONFLICT (day, control_type) DO UPDATE` 로 증분 갱신 (count +1, by_source/by_priority `jsonb_set` 로 키별 +1).
+
+### `ai_agent_activity_hourly` (시간별 집계)
+
+| 컬럼 | 타입 | NULL | 설명 |
+|------|------|:----:|------|
+| hour | TIMESTAMPTZ | NO | `date_trunc('hour', timestamp)` (PK) |
+| control_type | VARCHAR(32) | NO | PK |
+| count | INTEGER | NO |  |
+| by_source | JSONB | NO |  |
+| by_priority | JSONB | NO |  |
+| last_at | TIMESTAMPTZ | YES |  |
+| updated_at | TIMESTAMPTZ | NO |  |
+
+인덱스: `hour DESC`. 용도: 최근 48h 그래프.
+
+> **데이터 정합성**: `ai_agent_decisions` (원본) 이 canonical source. daily/hourly 는 Bridge 가 장애로 누락된 경우 원본에서 재빌드 가능 (운영 스크립트는 추후 작성).
+>
+> **TTL**: `ai_agent_decisions` 는 `AI_AGENT_MIRROR_TTL_DAYS=30` (default). 야간 배치로 `DELETE WHERE created_at < now() - INTERVAL '30 days'` 수행 예정 (현재 수동 또는 Bridge 에 후속 구현).
 
 ---
 

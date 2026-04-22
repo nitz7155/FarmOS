@@ -26,9 +26,6 @@ class Settings(BaseSettings):
     # JWT
     JWT_SECRET_KEY: str = ""
 
-    # IoT 디바이스 API Key (ESP8266 인증용)
-    IOT_API_KEY: str = "farmos-iot-default-key"
-
     # KMA (기상청 API)
     KMA_ENCODING_KEY: str = ""
     KMA_DECODING_KEY: str = ""
@@ -36,10 +33,6 @@ class Settings(BaseSettings):
     # KAMIS (농산물유통정보 API)
     KAMIS_API_KEY: str = ""
     KAMIS_CERT_ID: str = ""
-
-    # Sensor thresholds
-    SOIL_MOISTURE_LOW: float = 55.0
-    SOIL_MOISTURE_HIGH: float = 70.0
 
     # OpenRouter (LLM API)
     OPENROUTER_API_KEY: str = ""
@@ -70,10 +63,22 @@ class Settings(BaseSettings):
     REVIEW_ANALYSIS_BATCH_SIZE: int = 40
     REVIEW_ANALYSIS_MAX_RETRIES: int = 2
 
+    # 앱 타임존 (집계 일/시간 버킷의 로컬 기준)
+    APP_TIMEZONE: str = "Asia/Seoul"
+
     # AI Agent (IoT 자동 제어)
     AI_AGENT_MODEL: str = "openai/gpt-5-mini"
     AI_AGENT_LLM_INTERVAL: int = 300  # LLM 호출 최소 간격 (초)
     AI_AGENT_RULE_INTERVAL: int = 30  # 규칙 판단 간격 (초)
+
+    # AI Agent Action History Bridge (Relay → FarmOS 미러)
+    IOT_RELAY_BASE_URL: str = "http://localhost:9000"
+    # 실제 키는 반드시 .env / 환경변수(IOT_RELAY_API_KEY) 로 주입한다.
+    # 빈 문자열이면 AI_AGENT_BRIDGE_ENABLED=True 라도 Bridge 는 안전하게 비활성화된다.
+    IOT_RELAY_API_KEY: str = ""
+    AI_AGENT_BRIDGE_ENABLED: bool = False  # Relay 패치 적용 전 기본 off
+    AI_AGENT_MIRROR_TTL_DAYS: int = 30
+    AI_AGENT_BACKFILL_PAGE_SIZE: int = 200
 
     # 농장 위치 (기상청 격자좌표)
     FARM_NX: int = 84   # 경북 상주 기준
