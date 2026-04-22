@@ -1,14 +1,20 @@
 import logging
+import httpx
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, asc
 from sqlalchemy.exc import SQLAlchemyError
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.output_parsers import StrOutputParser
 
 from app.core.database import get_db
 from app.models.diagnosis import DiagnosisHistory, DiagnosisChatMessage
 from app.core.deps import get_current_user
 from app.models.user import User
+from app.core.config import settings
 
 from app.services.diagnosis_agent import run_diagnosis
 
@@ -172,7 +178,8 @@ async def add_chat_message(
         (DiagnosisHistory.id == history_id) & (DiagnosisHistory.user_id == current_user.id)
     )
     check_result = await db.execute(check_query)
-    if not check_result.scalar_one_or_none():
+    history = check_result.scalar_one_or_none()
+    if not history:
         raise HTTPException(status_code=404, detail="진단 기록을 찾을 수 없습니다.")
 
     # 1. 사용자 메시지 저장
@@ -188,7 +195,6 @@ async def add_chat_message(
     # 사용자가 보낸 메시지인 경우에만 AI 답변 생성
     if new_msg.role == "user":
         # 기존 대화 내역 조회
-        from sqlalchemy import asc
         hist_query = select(DiagnosisChatMessage).where(
             DiagnosisChatMessage.diagnosis_id == history_id
         ).order_by(asc(DiagnosisChatMessage.created_at))
@@ -196,27 +202,39 @@ async def add_chat_message(
         db_msgs = hist_res.scalars().all()
         
         # LLM 호출 준비
-        from app.core.config import settings
-        from langchain_openai import ChatOpenAI
-        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-        from langchain_core.output_parsers import StrOutputParser
-        
         api_key = settings.OPENROUTER_API_KEY
         model_name = settings.OPENROUTER_PEST_RAG_MODEL
         
         ai_reply = "API 키가 없어 답변할 수 없습니다."
         if api_key != "dummy" and api_key:
             try:
+                # httpx를 통해 HTTP/1.1 강제로 Cloudflare의 HTTP/2 버그(RemoteProtocolError) 원천 차단
+                custom_async_client = httpx.AsyncClient(
+                    http1=True,
+                    http2=False,
+                    timeout=httpx.Timeout(180.0, connect=20.0)
+                )
+
                 llm = ChatOpenAI(
                     model=model_name,
                     api_key=api_key,
                     base_url=settings.OPENROUTER_URL,
-                    temperature=0.3
+                    temperature=0.3,
+                    http_async_client=custom_async_client
                 )
                 
                 # 시스템 프롬프트 구성 (전문 농업 진단사 역할)
+                # 진단 대상 정보를 프롬프트에 명시적으로 추가하여 컨텍스트 강화
+                system_content = (
+                    f"당신은 전문 식물 의사 및 농업 컨설턴트입니다.\n"
+                    f"현재 진단 대상: {history.crop} ({history.pest})\n"
+                    f"지역: {history.region}\n\n"
+                    "사용자의 진단 결과에 기반하여, 추가적인 방제 요령, 농약 혼용 방법, 예방 대책 등에 대해 친절하고 전문적으로 답변해 주세요. "
+                    "이전 대화 맥락을 기억하고 이어나가세요."
+                )
+                
                 chat_msgs = [
-                    SystemMessage(content="당신은 전문 식물 의사 및 농업 컨설턴트입니다. 사용자의 작물 병해충 진단 결과에 기반하여, 추가적인 방제 요령, 농약 혼용 방법, 예방 대책 등에 대해 친절하고 전문적으로 답변해 주세요. 이전 대화 맥락을 기억하고 이어나가세요.")
+                    SystemMessage(content=system_content)
                 ]
                 
                 # 대화 기록 변환
@@ -231,6 +249,7 @@ async def add_chat_message(
                 ai_reply = await chain.ainvoke(chat_msgs)
             except Exception as e:
                 print(f"Chat generation error: {e}")
+                logger.error(f"Chat generation error for history {history_id}: {e}", exc_info=True)
                 ai_reply = "AI 답변 생성 중 오류가 발생했습니다."
 
         # 2. AI 메시지 저장
