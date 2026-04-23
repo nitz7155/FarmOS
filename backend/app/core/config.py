@@ -1,4 +1,11 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+
+# 프로젝트 번들 폰트 경로 — cross-platform 기본값.
+# `.env` 의 FONT_PATH / FONT_BOLD_PATH 로 개별 오버라이드 가능.
+_BUNDLED_FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
 
 class Settings(BaseSettings):
@@ -100,8 +107,10 @@ class Settings(BaseSettings):
     FARM_NX: int = 84   # 경북 상주 기준
     FARM_NY: int = 106
 
-    # 한글 폰트 (PDF 생성용)
-    FONT_PATH: str = "C:/Windows/Fonts/malgun.ttf"
+    # 한글 폰트 (PDF 생성용) — 저장소에 번들된 Pretendard(SIL OFL 1.1) 기본 사용.
+    # 시스템 폰트 사용하려면 .env에서 절대 경로로 오버라이드 가능.
+    FONT_PATH: str = str(_BUNDLED_FONTS_DIR / "Pretendard-Regular.ttf")
+    FONT_BOLD_PATH: str = str(_BUNDLED_FONTS_DIR / "Pretendard-Bold.ttf")
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

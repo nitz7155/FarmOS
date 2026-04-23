@@ -12,6 +12,7 @@ from app.api import (
     auth,
     health,
     journal,
+    daily_journal,
     knowledge,
     market,
     pesticide,
@@ -25,6 +26,7 @@ from app.models.user import User  # noqa: F401 — Base.metadata 등록용
 from app.models.review_analysis import ReviewAnalysis, ReviewSentiment  # noqa: F401
 from app.models.diagnosis import DiagnosisHistory  # noqa: F401
 from app.models.journal import JournalEntry  # noqa: F401
+from app.models.daily_journal import DailyJournal, DailyJournalRevision  # noqa: F401
 from app.models.ai_agent import (  # noqa: F401 — Base.metadata 등록용 (agent-action-history)
     AiAgentDecision,
     AiAgentActivityDaily,
@@ -125,6 +127,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(health.router, prefix=settings.API_V1_PREFIX)
 app.include_router(journal.router, prefix=settings.API_V1_PREFIX)
+app.include_router(daily_journal.router, prefix=settings.API_V1_PREFIX)
 app.include_router(knowledge.router, prefix=settings.API_V1_PREFIX)
 app.include_router(pesticide.router, prefix=settings.API_V1_PREFIX)
 app.include_router(market.router, prefix=settings.API_V1_PREFIX)

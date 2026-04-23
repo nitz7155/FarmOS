@@ -377,6 +377,39 @@ export interface MissingFieldAlert {
   created_at: string | null;
 }
 
+// DailyJournal — 하루치 JournalEntry들을 통합한 서술형 최종 보고서
+export type DailyJournalStatus = "draft" | "confirmed";
+export type DailyJournalNarrativeSource =
+  | "llm"
+  | "llm_edited"
+  | "manual"
+  | "template_fallback";
+
+export interface DailyJournalRevisionAPI {
+  id: number;
+  narrative: string;
+  narrative_source: DailyJournalNarrativeSource;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface DailyJournalAPI {
+  id: number;
+  user_id: string;
+  work_date: string;
+  status: DailyJournalStatus;
+  narrative: string;
+  narrative_source: DailyJournalNarrativeSource;
+  source_entry_ids: number[];
+  entry_snapshot: Array<Record<string, unknown>>;
+  llm_model: string | null;
+  llm_prompt_version: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  revisions: DailyJournalRevisionAPI[] | null;
+}
+
 // Market (KAMIS dailySalesList)
 export interface KamisItemPrice {
   product_cls_code: string; // 01:소매, 02:도매

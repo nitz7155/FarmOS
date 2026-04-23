@@ -48,12 +48,10 @@ class JournalPDF(FPDF):
         self.farm_name = farm_name
         self.date_from = date_from
         self.date_to = date_to
+        # 폰트 alias "malgun"은 기존 호환용으로 유지(실제 파일은 Pretendard 번들).
+        # FONT_PATH / FONT_BOLD_PATH 각각 독립적으로 .env에서 오버라이드 가능.
         self.add_font("malgun", "", settings.FONT_PATH, uni=True)
-        # Bold 폰트: malgunbd.ttf (같은 폴더)
-        import os
-
-        bold_path = os.path.join(os.path.dirname(settings.FONT_PATH), "malgunbd.ttf")
-        self.add_font("malgun", "B", bold_path, uni=True)
+        self.add_font("malgun", "B", settings.FONT_BOLD_PATH, uni=True)
         self.set_auto_page_break(auto=False)
         self.set_margins(MARGIN, MARGIN, MARGIN)
 

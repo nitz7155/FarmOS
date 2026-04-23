@@ -3,10 +3,10 @@ import {
   MdAdd,
   MdEdit,
   MdDelete,
-  MdFileDownload,
   MdClose,
   MdChevronLeft,
   MdChevronRight,
+  MdFileDownload,
 } from "react-icons/md";
 import toast from "react-hot-toast";
 import { useJournalData } from "@/hooks/useJournalData";
@@ -16,7 +16,9 @@ import JournalEntryForm, {
 import STTInput, { type STTInputHandle } from "./STTInput";
 import MissingFieldsAlert from "./MissingFieldsAlert";
 import DailySummaryCard from "./DailySummaryCard";
+import DailyJournalPanel from "./DailyJournalPanel";
 import type { JournalEntryAPI, STTParseResult } from "@/types";
+import { toLocalDateString } from "@/utils/date";
 
 const STAGE_COLORS: Record<string, string> = {
   사전준비: "bg-gray-100 text-gray-700",
@@ -63,6 +65,10 @@ export default function JournalPage() {
   const [sttEntries, setSttEntries] = useState<Record<string, unknown>[]>([]);
   const [currentEntryIdx, setCurrentEntryIdx] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // DailyJournalPanel에 "지금 entry 목록 다시 보세요" 신호를 보내는 토큰.
+  // entry 생성/수정/삭제 직후 증가시키면 Panel이 즉시 stale 카운트를 재계산함.
+  const [panelRefreshToken, setPanelRefreshToken] = useState(0);
+  const bumpPanel = () => setPanelRefreshToken((t) => t + 1);
   const sttRef = useRef<STTInputHandle>(null);
   const formRef = useRef<JournalEntryFormHandle>(null);
 
@@ -124,6 +130,7 @@ export default function JournalPage() {
       }
       closeForm();
       fetchEntries(filter === "all" ? {} : { workStage: filter });
+      bumpPanel();
       return;
     }
 
@@ -132,6 +139,7 @@ export default function JournalPage() {
       toast.success("영농일지가 저장되었습니다.");
       closeForm();
       fetchEntries(filter === "all" ? {} : { workStage: filter });
+      bumpPanel();
     } else {
       toast.error("저장에 실패했습니다.");
     }
@@ -144,6 +152,7 @@ export default function JournalPage() {
       toast.success("영농일지가 수정되었습니다.");
       setEditingEntry(null);
       fetchEntries(filter === "all" ? {} : { workStage: filter });
+      bumpPanel();
     } else {
       toast.error("수정에 실패했습니다.");
     }
@@ -155,6 +164,7 @@ export default function JournalPage() {
     if (ok) {
       toast.success("삭제되었습니다.");
       fetchEntries(filter === "all" ? {} : { workStage: filter });
+      bumpPanel();
     } else {
       toast.error("삭제에 실패했습니다.");
     }
@@ -185,12 +195,31 @@ export default function JournalPage() {
     setShowForm(true);
   };
 
-  const handleExportPDF = () => {
-    const today = new Date().toISOString().slice(0, 10);
-    window.open(
-      `http://localhost:8000/api/v1/journal/export-pdf?date_from=2026-01-01&date_to=${today}`,
-      "_blank",
-    );
+  const handleExportPDF = async () => {
+    // 기간 통합 영농일지 PDF — 올해 1/1 ~ 오늘 범위.
+    // (시작일 하드코딩을 피해 연도 전환 시 자동으로 범위 재설정되도록 동적 계산)
+    // window.open은 새 탭에서 쿠키 SameSite로 인증 실패할 수 있어 fetch+blob 사용.
+    const today = toLocalDateString();
+    const dateFrom = `${new Date().getFullYear()}-01-01`;
+    const url = `http://localhost:8000/api/v1/daily-journal/export-pdf?date_from=${dateFrom}&date_to=${today}`;
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) {
+        toast.error(`PDF 다운로드 실패 (${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = `daily_journal_${dateFrom}_${today}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+    } catch (e) {
+      toast.error(`PDF 다운로드 실패: ${(e as Error).message}`);
+    }
   };
 
   // 날짜별 그룹핑
@@ -210,8 +239,7 @@ export default function JournalPage() {
     ? ({
         ...({} as JournalEntryAPI),
         work_date:
-          (sttPrefill.work_date as string) ||
-          new Date().toISOString().slice(0, 10),
+          (sttPrefill.work_date as string) || toLocalDateString(),
         field_name: (sttPrefill.field_name as string) || "",
         crop: (sttPrefill.crop as string) || "",
         work_stage:
@@ -236,7 +264,11 @@ export default function JournalPage() {
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">총 {total}건</p>
         <div className="flex gap-2">
-          <button onClick={handleExportPDF} className="btn-outline text-sm">
+          <button
+            onClick={handleExportPDF}
+            className="btn-outline text-sm"
+            title="기간 내 모든 통합 영농일지를 한 PDF로 받습니다"
+          >
             <MdFileDownload /> PDF 내보내기
           </button>
           <button
@@ -251,6 +283,9 @@ export default function JournalPage() {
           </button>
         </div>
       </div>
+
+      {/* 오늘의 통합 영농일지 (하루치 개별 entry들을 서술형 1부로 통합) */}
+      <DailyJournalPanel refreshToken={panelRefreshToken} />
 
       {/* 누락 경고 */}
       <MissingFieldsAlert
