@@ -50,6 +50,7 @@ bool fanOn = false;
 bool waterOn = false;
 bool lightOn = false;
 bool shadeOn = false;
+bool heatingOn = false;  // D3 HW 계약: 차광과 일괄 토글 (Design §3.1.1)
 
 // 인터럽트용 플래그
 volatile bool fanPressed = false;
@@ -161,10 +162,16 @@ void checkButtons() {
   }
   if (shadePressed) {
     shadePressed = false;
+    // Design Ref: §3.1.2 — D3 HW 계약: shade + heating 동시 토글 (firmware 내부 상태)
+    // backend 는 shading 하나의 control_type 으로 묶어 처리 (insulation_pct + shade_pct sub-field).
+    // heating 을 별도 /control/report 로 보내면 backend 가 Unknown control_type 으로 거부하므로
+    // shading payload 에 on 필드를 포함시켜 UI master toggle 상태까지 동기화한다.
     shadeOn = !shadeOn;
+    heatingOn = shadeOn;
     mirrorLeds();
     reportButton("shading", shadeOn);
     lastBtnMs = millis();
+    return;
   }
 }
 
@@ -256,6 +263,15 @@ void applyCommand(const char* ct, JsonObject a) {
       shadeOn = (a["shade_pct"].as<int>() > 0);
     } else if (a.containsKey("active")) {
       shadeOn = a["active"].as<bool>();
+    }
+  } else if (strcmp(ct, "heating") == 0) {
+    // Design Ref: §3.1.3 — D3 HW 계약상 shade 와 동기이나, 서버 명령은 독립 수신 가능
+    if (a.containsKey("insulation_pct")) {
+      heatingOn = (a["insulation_pct"].as<int>() > 0);
+    } else if (a.containsKey("on")) {
+      heatingOn = a["on"].as<bool>();
+    } else if (a.containsKey("active")) {
+      heatingOn = a["active"].as<bool>();
     }
   } else if (strcmp(ct, "irrigation") == 0) {
     // Plan FR-08: 관수 LED는 서버 상태 미러링 (버튼 없음)
@@ -380,9 +396,11 @@ void reportButton(const char* ct, bool on) {
       "{\"on\":%s,\"brightness_pct\":%d}",
       on ? "true" : "false", on ? 100 : 0);
   } else if (strcmp(ct, "shading") == 0) {
+    // Design Ref: §3.1.2 — on 필드 포함. 프론트 ShadingCard master toggle 이 state.on 을 기준.
+    // insulation_pct 는 0 고정(HW 계약상 shade 와 묶여 on/off 만 의미 있음).
     snprintf(state, sizeof(state),
-      "{\"shade_pct\":%d,\"insulation_pct\":0}",
-      on ? 100 : 0);
+      "{\"shade_pct\":%d,\"insulation_pct\":0,\"on\":%s}",
+      on ? 100 : 0, on ? "true" : "false");
   } else {
     return;   // 미지원 control_type 무시
   }
