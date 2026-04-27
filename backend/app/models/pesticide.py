@@ -1,8 +1,8 @@
 """농약 검색/매칭용 모델 (bootstrap 스키마와 동일)."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -212,3 +212,19 @@ class PesticideProduct(Base):
     updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
 
     details: Mapped[PesticideApplication] = relationship(back_populates="document_entry")
+
+
+class PesticideDataVersion(Base):
+    """번들 농약 JSON 스냅샷의 DB 적재 이력.
+
+    번들 파일의 VERSION.txt 값과 비교하여 부팅 시 자동 재시드 여부를 판단.
+    """
+
+    __tablename__ = "rag_pesticide_version"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)  # 예: "2026-04-24_54836"
+    seeded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
