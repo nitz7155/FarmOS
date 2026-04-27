@@ -96,18 +96,11 @@ uv run python scripts/seed_and_verify.py
 
 ### BM25 한국어 토크나이저
 
-`seed_rag.py`의 `_make_tokenizer()`는 **kiwipiepy** 형태소 분석기를 우선 사용합니다.
+`seed_rag.py`의 `_tokenize_ko()`는 정규식 기반 토크나이저를 사용합니다.
+인덱스 빌드(seed)와 검색 쿼리 토큰화를 동일한 방식으로 통일하여 일관성을 보장합니다.
 
 ```python
-# kiwipiepy 설치된 경우 — 명사·동사·형용사·숫자·외래어 추출
-kiwi.tokenize("딸기를 보관하는 방법") → ["딸기", "보관", "방법"]
-
-# kiwipiepy 없는 경우 — 정규식 fallback (기능 저하 없음, 경고 로그 출력)
-re.findall(r"[가-힣a-zA-Z0-9]+", text)
-```
-
-kiwipiepy를 설치하면 어미 변형("딸기를" → "딸기")이 정규화되어 BM25 召回率이 향상됩니다.
-
-```bash
-uv add kiwipiepy   # 선택적 의존성
+# 한글·영문·숫자 단위로 분리
+re.findall(r"[가-힣a-zA-Z0-9]+", text.lower())
+# "딸기를 보관하는 방법" → ["딸기를", "보관하는", "방법"]
 ```
