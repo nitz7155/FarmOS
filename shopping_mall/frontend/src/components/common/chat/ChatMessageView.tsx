@@ -49,6 +49,20 @@ function OrderFlowActions({
   const chipGray = `${base} px-3 py-1.5 border border-gray-300 text-gray-600 rounded-full hover:border-[#03C75A] hover:text-[#03C75A]`;
   const card = `${base} w-full text-left px-3 py-2.5 border border-[#03C75A]/30 rounded-xl hover:bg-[#03C75A]/8 text-gray-700`;
 
+  // CS 핸드오프: 교환 / 반품·환불
+  if (parsed.type === 'cs-handoff') {
+    return (
+      <div className="flex gap-2 mt-2">
+        <button onClick={() => onSend('교환')} disabled={disabled} className={primary}>
+          교환
+        </button>
+        <button onClick={() => onSend('반품')} disabled={disabled} className={outline}>
+          반품·환불
+        </button>
+      </div>
+    );
+  }
+
   // 네 / 아니오
   if (parsed.type === 'confirm') {
     return (

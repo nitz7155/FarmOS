@@ -63,28 +63,31 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to start scheduler: {e}")
 
     try:
-        from app.core.config import settings
         from app.routers.chatbot import set_chatbot_service
         from ai.rag import RAGService
-        from ai.agent import OpenAIAgentClient, ClaudeAgentClient, AgentExecutor
+        from ai.agent import AgentExecutor, build_primary_llm, build_fallback_llm
+        from ai.agent.llm import _set_langsmith_env
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        from ai.agent.subagents.cs.tools import CS_TOOLS
         from ai.agent.subagents.cs.prompts import CS_INPUT_PROMPT, CS_OUTPUT_PROMPT
         from ai.agent.order_graph.graph import build_order_graph
         from ai.agent.supervisor import SupervisorExecutor
         from ai.agent.supervisor.prompts import SUPERVISOR_INPUT_PROMPT, SUPERVISOR_OUTPUT_PROMPT
         from app.services.multi_agent_chatbot import MultiAgentChatbotService
 
+        _set_langsmith_env()
         rag = RAGService()
-        primary = OpenAIAgentClient(
-            base_url=settings.primary_llm_base_url,
-            api_key=settings.primary_llm_api_key,
-            model=settings.primary_llm_model,
-        )
-        fallback = ClaudeAgentClient(
-            api_key=settings.anthropic_api_key,
-            model=settings.claude_fallback_model,
-        ) if settings.anthropic_api_key else None
+
+        # BM25·Reranker 사전 로드 — 첫 요청 시 이벤트 루프 블로킹 방지
+        # BM25는 JSON 파싱이라 빠름, Reranker(~570MB)는 스레드풀에서 로드
+        import asyncio
+        from ai.rag import _load_bm25, _load_reranker
+        _load_bm25()
+        if settings.reranker_model:
+            logger.info("Reranker 사전 로드 시작: %s", settings.reranker_model)
+            await asyncio.to_thread(_load_reranker, settings.reranker_model)
+
+        primary = build_primary_llm()
+        fallback = build_fallback_llm()
 
         async with AsyncPostgresSaver.from_conn_string(settings.langgraph_postgres_url) as checkpointer:
             await checkpointer.setup()
@@ -94,7 +97,6 @@ async def lifespan(app: FastAPI):
                 primary=primary,
                 fallback=fallback,
                 rag_service=rag,
-                tools=CS_TOOLS,
                 max_iterations=settings.agent_max_iterations,
             )
             supervisor = SupervisorExecutor(
@@ -110,7 +112,7 @@ async def lifespan(app: FastAPI):
                 input_prompt=SUPERVISOR_INPUT_PROMPT,
                 output_prompt=SUPERVISOR_OUTPUT_PROMPT,
             ))
-            logger.info("Multi-agent chatbot service initialized.")
+            logger.info("Multi-agent chatbot service initialized (LangChain).")
             yield
 
     except Exception as e:

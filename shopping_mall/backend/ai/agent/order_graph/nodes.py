@@ -76,23 +76,50 @@ def _is_confirm_intent(text: str) -> bool:
     return any(kw in text_lower for kw in CONFIRM_KEYWORDS)
 
 
-def _format_order_summary(db, order) -> str:
-    """주문 요약 문자열 생성 (주문 품목 첫 번째 상품명 포함)."""
+def _build_order_summaries(db, orders: list) -> dict[int, str]:
+    """주문 목록에 대한 요약 문자열을 일괄 조회로 생성.
+
+    N+1 방지: 주문 ID 목록으로 OrderItem·Product를 각 1회 쿼리.
+
+    Returns:
+        {order_id: "상품명 외 N건"} 형태의 딕셔너리
+    """
     from app.models.order import OrderItem
     from app.models.product import Product
 
-    first_item = (
+    order_ids = [o.id for o in orders]
+
+    # 주문별 전체 품목 일괄 조회
+    all_items = (
         db.query(OrderItem)
-        .filter(OrderItem.order_id == order.id)
-        .first()
+        .filter(OrderItem.order_id.in_(order_ids))
+        .all()
     )
-    if first_item:
-        product = db.query(Product).filter(Product.id == first_item.product_id).first()
-        product_name = product.name if product else "상품"
-        item_count = db.query(OrderItem).filter(OrderItem.order_id == order.id).count()
-        suffix = f" 외 {item_count - 1}건" if item_count > 1 else ""
-        return f"{product_name}{suffix}"
-    return "주문 상품"
+
+    # order_id → items 그룹핑
+    items_by_order: dict[int, list] = {oid: [] for oid in order_ids}
+    product_ids: set[int] = set()
+    for item in all_items:
+        items_by_order[item.order_id].append(item)
+        product_ids.add(item.product_id)
+
+    # 필요한 상품 정보 일괄 조회
+    products: dict[int, str] = {}
+    if product_ids:
+        for p in db.query(Product).filter(Product.id.in_(product_ids)).all():
+            products[p.id] = p.name
+
+    summaries: dict[int, str] = {}
+    for order in orders:
+        items = items_by_order.get(order.id, [])
+        if not items:
+            summaries[order.id] = "주문 상품"
+            continue
+        first_name = products.get(items[0].product_id, "상품")
+        suffix = f" 외 {len(items) - 1}건" if len(items) > 1 else ""
+        summaries[order.id] = f"{first_name}{suffix}"
+
+    return summaries
 
 
 def _parse_order_selection(text: str, orders: list) -> int | None:
@@ -159,13 +186,19 @@ def _parse_item_selections(user_input: str, order_items: list, db) -> list:
     """
     from app.models.product import Product
 
+    # 관련 상품 정보 일괄 조회 — N+1 방지
+    product_ids = {oi.product_id for oi in order_items}
+    product_names: dict[int, str] = {}
+    if product_ids:
+        for p in db.query(Product).filter(Product.id.in_(product_ids)).all():
+            product_names[p.id] = p.name
+
     selected: list = []
 
     # "전체" 단독 입력 — "N번 상품 전체"는 아래 N번 패턴으로 처리
     if "전체" in user_input and not re.search(r"\d+\s*번", user_input):
         for oi in order_items:
-            product = db.query(Product).filter(Product.id == oi.product_id).first()
-            name = product.name if product else f"상품 #{oi.product_id}"
+            name = product_names.get(oi.product_id, f"상품 #{oi.product_id}")
             selected.append({"item_id": oi.id, "product_id": oi.product_id, "name": name, "qty": oi.quantity})
         return selected
 
@@ -174,8 +207,7 @@ def _parse_item_selections(user_input: str, order_items: list, db) -> list:
         idx = int(m.group(1))
         if 1 <= idx <= len(order_items):
             oi = order_items[idx - 1]
-            product = db.query(Product).filter(Product.id == oi.product_id).first()
-            name = product.name if product else f"상품 #{oi.product_id}"
+            name = product_names.get(oi.product_id, f"상품 #{oi.product_id}")
             qty = min(int(m.group(2)), oi.quantity) if m.group(2) else oi.quantity
             selected.append({"item_id": oi.id, "product_id": oi.product_id, "name": name, "qty": qty})
 
@@ -225,14 +257,15 @@ async def list_orders(state: OrderState, config: RunnableConfig) -> dict:
             "is_pending": False,
         }
 
+    # 일괄 조회로 N+1 방지
+    summaries = _build_order_summaries(db, orders)
     order_lines = []
     for i, o in enumerate(orders):
-        summary = _format_order_summary(db, o)
         date_str = o.created_at.strftime("%Y-%m-%d")
         status_display = _STATUS_DISPLAY.get(o.status, o.status)
         order_lines.append(
             f"{i + 1}) 주문 번호 #{o.id}\n"
-            f"   · 상품: {summary}\n"
+            f"   · 상품: {summaries[o.id]}\n"
             f"   · 주문일: {date_str}\n"
             f"   · 상태: {status_display}"
         )
@@ -272,11 +305,10 @@ async def list_orders(state: OrderState, config: RunnableConfig) -> dict:
             "is_pending": False,
         }
 
-    # 선택된 주문 표시명 생성
+    # 선택된 주문 표시명 생성 (summaries는 이미 일괄 조회된 상태)
     selected_order = next(o for o in orders if o.id == order_id)
-    summary = _format_order_summary(db, selected_order)
     order_display = (
-        f"주문 번호 #{order_id} · {summary} · 주문일 {selected_order.created_at.strftime('%Y-%m-%d')}"
+        f"주문 번호 #{order_id} · {summaries[order_id]} · 주문일 {selected_order.created_at.strftime('%Y-%m-%d')}"
     )
 
     return {**state, "order_id": order_id, "order_display": order_display}
@@ -297,10 +329,16 @@ async def select_items(state: OrderState, config: RunnableConfig) -> dict:
     if not order_items:
         return {**state, "abort": True, "response": "해당 주문의 상품을 조회할 수 없습니다.", "is_pending": False}
 
+    # 상품명 일괄 조회 — N+1 방지
+    product_ids = {oi.product_id for oi in order_items}
+    product_names: dict[int, str] = {
+        p.id: p.name
+        for p in db.query(Product).filter(Product.id.in_(product_ids)).all()
+    }
+
     item_lines = []
     for i, oi in enumerate(order_items):
-        product = db.query(Product).filter(Product.id == oi.product_id).first()
-        name = product.name if product else f"상품 #{oi.product_id}"
+        name = product_names.get(oi.product_id, f"상품 #{oi.product_id}")
         item_lines.append(f"{i + 1}. {name} × {oi.quantity}개")
     item_list = "\n".join(item_lines)
 
@@ -351,19 +389,26 @@ async def check_stock(state: OrderState, config: RunnableConfig) -> dict:
     from app.models.product import Product
 
     db = _get_db(config)
-    notes = []
 
+    # 재고 일괄 조회 — N+1 방지
+    product_ids = {item["product_id"] for item in state["selected_items"]}
+    stock_map: dict[int, int] = {}
+    if product_ids:
+        for p in db.query(Product).filter(Product.id.in_(product_ids)).all():
+            stock_map[p.id] = p.stock
+
+    notes = []
     for item in state["selected_items"]:
-        product = db.query(Product).filter(Product.id == item["product_id"]).first()
-        if product and product.stock < item["qty"]:
-            if product.stock == 0:
+        stock = stock_map.get(item["product_id"])
+        if stock is not None and stock < item["qty"]:
+            if stock == 0:
                 notes.append(f"• {item['name']}: 현재 재고 없음 (접수는 가능하며 오피스 확인 후 처리됩니다)")
             else:
-                notes.append(f"• {item['name']}: 현재 재고 {product.stock}개 (요청 {item['qty']}개)")
+                notes.append(f"• {item['name']}: 현재 재고 {stock}개 (요청 {item['qty']}개)")
 
     # 재고 노트는 summary에서 보여주므로 state에만 저장
     stock_note = "\n".join(notes) if notes else ""
-    return {**state, "_stock_note": stock_note} if stock_note else state
+    return {**state, "stock_note": stock_note}
 
 
 async def get_reason(state: OrderState, config: RunnableConfig) -> dict:
@@ -396,8 +441,29 @@ async def get_refund_method(state: OrderState, config: RunnableConfig) -> dict:
     return {**state, "refund_method": refund_method}
 
 
+_MAX_CONFIRMATION_ATTEMPTS = 3
+
+
 async def show_summary(state: OrderState, config: RunnableConfig) -> dict:
-    """최종 내용 요약 → interrupt로 최종 승인 대기."""
+    """최종 내용 요약 → interrupt로 최종 승인 대기.
+
+    confirmation_attempts가 _MAX_CONFIRMATION_ATTEMPTS를 초과하면
+    무한 루프 방지를 위해 플로우를 강제 중단합니다.
+    """
+    attempts = state.get("confirmation_attempts", 0) + 1
+    if attempts > _MAX_CONFIRMATION_ATTEMPTS:
+        logger.warning(
+            "[order_graph] show_summary 최대 재확인 횟수 초과 — 플로우 강제 중단 (user=%s)",
+            state.get("user_id"),
+        )
+        return {
+            **state,
+            "abort": True,
+            "confirmation_attempts": attempts,
+            "response": "확인이 어려워 처리를 중단했습니다. 다시 시도하시려면 처음부터 말씀해 주세요.",
+            "is_pending": False,
+        }
+
     if state["action"] == "cancel":
         prompt = ORDER_PROMPTS["cancel_summary"].format(
             order_display=state.get("order_display", ""),
@@ -409,7 +475,7 @@ async def show_summary(state: OrderState, config: RunnableConfig) -> dict:
             f"  • {item['name']} × {item['qty']}개"
             for item in state.get("selected_items", [])
         )
-        stock_note = state.get("_stock_note", "")  # type: ignore[typeddict-item]
+        stock_note = state.get("stock_note", "")
         if stock_note:
             items_display += f"\n\n재고 안내:\n{stock_note}"
 
@@ -426,7 +492,7 @@ async def show_summary(state: OrderState, config: RunnableConfig) -> dict:
     # 단순 "아니오"/"아니요"는 abort가 아닌 confirmed=False로 처리하여 재확인 유도.
     is_hard_cancel = _is_hard_cancel_intent(user_input)
     confirmed = _is_confirm_intent(user_input) and not _is_flow_abort_intent(user_input, state["action"])
-    return {**state, "confirmed": confirmed, "abort": is_hard_cancel}
+    return {**state, "confirmed": confirmed, "abort": is_hard_cancel, "confirmation_attempts": attempts}
 
 
 async def create_ticket(state: OrderState, config: RunnableConfig) -> dict:
@@ -473,10 +539,38 @@ async def create_ticket(state: OrderState, config: RunnableConfig) -> dict:
     existing = db.query(ShopTicket).filter(*_active_filter).first()
     if existing:
         logger.info(
-            "[order_graph] 기존 티켓 재사용: #%s user=%s action=%s order=%s",
+            "[order_graph] 중복 티켓 감지: #%s user=%s action=%s order=%s",
             existing.id, state["user_id"], state["action"], state["order_id"],
         )
-        response = ORDER_PROMPTS["ticket_created"].format(ticket_id=existing.id)
+        action_ko = "취소" if state["action"] == "cancel" else "교환"
+        prompt = ORDER_PROMPTS["duplicate_ticket"].format(
+            action=action_ko, ticket_id=existing.id
+        )
+
+        # ── interrupt: 수정 여부 확인 ─────────────────────────────────
+        user_input = interrupt(prompt)
+
+        if _is_confirm_intent(user_input) and not _is_flow_abort_intent(user_input, state["action"]):
+            # 기존 티켓을 새로 입력된 내용으로 업데이트
+            if state.get("reason"):
+                existing.reason = state["reason"]
+            if state["action"] == "cancel" and state.get("refund_method"):
+                existing.refund_method = state["refund_method"]
+            if state["action"] == "exchange" and state.get("selected_items"):
+                existing.items = json.dumps(state["selected_items"], ensure_ascii=False)
+            db.commit()
+            logger.info(
+                "[order_graph] 기존 티켓 수정: #%s user=%s",
+                existing.id, state["user_id"],
+            )
+            response = ORDER_PROMPTS["ticket_modified"].format(ticket_id=existing.id)
+        else:
+            logger.info(
+                "[order_graph] 기존 티켓 유지: #%s user=%s",
+                existing.id, state["user_id"],
+            )
+            response = ORDER_PROMPTS["ticket_unchanged"].format(ticket_id=existing.id)
+
         return {**state, "ticket_id": existing.id, "response": response, "is_pending": False}
 
     items_json = json.dumps(state.get("selected_items", []), ensure_ascii=False) or None

@@ -28,6 +28,7 @@ export interface ItemOption {
 
 export type OrderFlowUI =
   | { type: 'confirm' }
+  | { type: 'cs-handoff' }
   | { type: 'order-select'; items: OrderSelectItem[] }
   | { type: 'simple-options'; items: SimpleOption[] }
   | { type: 'item-select'; items: ItemOption[] }
@@ -46,13 +47,19 @@ export type OrderFlowUI =
 export function parseOrderFlowMessage(text: string): OrderFlowUI {
   if (!text) return null;
 
-  // 1. 최종 확인: (네 / 아니오)
+  // 1. CS 핸드오프: 교환 vs 반품·환불 선택
+  //    cs/prompts.py CS_OUTPUT_PROMPT 고정 문구 앵커
+  if (text.includes('교환과 반품·환불 중 원하시는 처리 방법')) {
+    return { type: 'cs-handoff' };
+  }
+
+  // 2. 최종 확인: (네 / 아니오)
   //    prompts: cancel_summary, exchange_summary, stock_insufficient
   if (text.includes('(네 / 아니오)')) {
     return { type: 'confirm' };
   }
 
-  // 2. 주문 선택: "번호(1, 2 …)를 입력해 주세요" 패턴
+  // 3. 주문 선택: "번호(1, 2 …)를 입력해 주세요" 패턴
   //    prompts: select_order_cancel, select_order_exchange, invalid_order_selection
   if (text.includes('번호(1, 2') && text.includes('를 입력해 주세요')) {
     const items: OrderSelectItem[] = [];
@@ -75,7 +82,7 @@ export function parseOrderFlowMessage(text: string): OrderFlowUI {
     if (items.length > 0) return { type: 'order-select', items };
   }
 
-  // 3. 교환 품목 선택
+  // 4. 교환 품목 선택
   //    prompts: select_items
   if (text.includes('교환할 상품과 수량을 알려주세요')) {
     const items: ItemOption[] = [];
@@ -86,7 +93,7 @@ export function parseOrderFlowMessage(text: string): OrderFlowUI {
     return { type: 'item-select', items };
   }
 
-  // 4. 사유 선택 / 환불 방법 선택
+  // 5. 사유 선택 / 환불 방법 선택
   //    prompts: cancel_reason, exchange_reason  → "번호 또는 사유를 입력해 주세요"
   //             refund_method                   → "번호를 입력해 주세요"
   if (

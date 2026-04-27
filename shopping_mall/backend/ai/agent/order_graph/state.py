@@ -15,10 +15,12 @@ class OrderState(TypedDict):
     selected_items: list        # [{"item_id": int, "name": str, "qty": int}]
     reason: str | None          # 교환/취소 사유
     refund_method: str | None   # 취소 시 환불 방법
+    stock_note: str             # 교환 품목 재고 부족 안내 (check_stock → show_summary 전달용)
 
     # ── 흐름 제어 ─────────────────────────────────────────────────────────
     confirmed: bool | None  # None=미결, True=최종 승인, False=거부
     abort: bool             # True → 즉시 handle_flow_cancel로 라우팅
+    confirmation_attempts: int  # show_summary 재진입 횟수 — 3회 초과 시 강제 탈출
 
     # ── 출력 ──────────────────────────────────────────────────────────────
     ticket_id: int | None

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.orm import Session
 
 from ai.agent.supervisor import SupervisorExecutor
+from ai.agent.responses import SERVICE_TEMPORARY_ERROR
 
 if TYPE_CHECKING:
     from ai.agent import ToolMetricData
@@ -49,16 +50,25 @@ class MultiAgentChatbotService:
         context = RequestContext.build(user_id)
 
         # Supervisor 에이전트 실행
-        result = await self.supervisor.run(
-            db=db,
-            user_message=question,
-            user_id=user_id,
-            session_id=session_id,
-            history=messages,
-            input_system=self.input_prompt,
-            output_system=self.output_prompt,
-            context=context,
-        )
+        try:
+            result = await self.supervisor.run(
+                db=db,
+                user_message=question,
+                user_id=user_id,
+                session_id=session_id,
+                history=messages,
+                input_system=self.input_prompt,
+                output_system=self.output_prompt,
+                context=context,
+            )
+        except Exception as e:
+            logger.error("에이전트 실행 오류: %s", e, exc_info=True)
+            from ai.agent.executor import AgentResult
+            result = AgentResult(
+                answer=SERVICE_TEMPORARY_ERROR,
+                intent="other",
+                escalated=True,
+            )
 
         # ChatLog 저장 + 세션 메타데이터 갱신 (단일 트랜잭션)
         from app.models.chat_log import ChatLog

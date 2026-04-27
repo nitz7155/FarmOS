@@ -6,10 +6,12 @@ EMBED_PROVIDER 설정에 따라 ChromaDB 임베딩 함수를 반환합니다.
   openrouter          — OpenRouter Embeddings API (PRIMARY_LLM_API_KEY 재사용, 추가 설정 불필요)
   ollama              — 로컬 Ollama 서버 (OLLAMA_BASE_URL + OLLAMA_EMBED_MODEL 사용)
   sentence_transformers — HuggingFace 모델 로컬 실행 (API 키·서버 불필요, uv add sentence-transformers만 필요)
+                          기본 모델: BAAI/bge-m3 (다국어·1024dim·8192 tok — 최초 실행 시 ~2.2GB 다운로드)
+                          dense retrieval만 사용 (ChromaDB는 sparse/ColBERT 미지원)
   openai              — OpenAI Embeddings API 또는 호환 엔드포인트 (EMBED_API_KEY 필요)
 
 ⚠️  시딩(seed_rag.py)과 쿼리(rag.py)는 반드시 동일한 provider + model을 사용해야 합니다.
-    provider/model을 바꾸면 반드시 re-seed 하세요.
+    provider/model을 바꾸면 반드시 re-seed + distance_threshold 재측정이 필요합니다.
 """
 from app.core.config import settings
 
@@ -48,7 +50,7 @@ def get_embedding_function():
 
     elif provider == "sentence_transformers":
         from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-        model = settings.embed_model or "jhgan/ko-sroberta-multitask"
+        model = settings.embed_model or "BAAI/bge-m3"
         return SentenceTransformerEmbeddingFunction(model_name=model)
 
     elif provider == "openai":
