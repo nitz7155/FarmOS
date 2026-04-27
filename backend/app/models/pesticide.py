@@ -228,4 +228,3 @@ class PesticideDataVersion(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
-

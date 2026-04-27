@@ -1,18 +1,11 @@
-"""shop_reviews 더미 리뷰 1,000건 시드.
-
-`bootstrap/insert_data.py`(Phase 2) 가 `seed_shoppingmall_reviews()` 를 호출한다.
-
-멱등성 보장 (plan §4):
-- 기존 코드의 `DELETE FROM shop_reviews` 라인은 제거되었다(데이터 손실 위험).
-- INSERT 는 `id` 를 명시하여 `ON CONFLICT (id) DO NOTHING` 으로 동작한다.
-  → 같은 id 가 이미 있으면 스킵, 없으면 추가 (가산형).
-- 추가 안전장치: 시작 시점에 `shop_reviews` row 수가 1000건 이상이면 전체 스킵.
-
-`random.seed(42)` 로 시퀀스가 고정되므로 같은 id 의 컨텐츠가 매번 동일하다.
-"""
-
+#!/usr/bin/env python
 # ruff: noqa: E402
 # pyright: reportMissingImports=false, reportMissingModuleSource=false
+"""shop_reviews 더미데이터 1,000건 생성 스크립트.
+
+기존 데이터 전부 삭제 후 1,000건 새로 INSERT.
+"""
+
 from __future__ import annotations
 
 import random
@@ -20,6 +13,11 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from _bootstrap_common import (  # type: ignore[import-not-found]
+    error,
+    info,
+    set_log_prefix,
+)
 from sqlalchemy import text
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,8 +27,7 @@ if str(SHOP_BACKEND_DIR) not in sys.path:
 
 from app.database import SessionLocal
 
-REVIEW_TARGET_COUNT = 1000
-REVIEW_RANDOM_SEED = 42
+LOG_PREFIX = "S.Mall-RS"
 
 POSITIVE_TEMPLATES = [
     "정말 맛있어요! {product} 품질이 최고입니다.",
@@ -184,10 +181,6 @@ PRODUCT_IDS = list(range(1, 43))
 USER_IDS = list(range(1, 6))
 
 
-def _log(message: str) -> None:
-    print(f"[shoppingmall_review_seed] {message}")
-
-
 def generate_review(review_id: int, sentiment: str, product_id: int) -> dict:
     product_name = (
         PRODUCT_NAMES[product_id - 1] if product_id <= len(PRODUCT_NAMES) else "상품"
@@ -217,7 +210,7 @@ def generate_review(review_id: int, sentiment: str, product_id: int) -> dict:
     }
 
 
-def generate_all_reviews(count: int = REVIEW_TARGET_COUNT) -> list[dict]:
+def generate_all_reviews(count: int = 1000) -> list[dict]:
     positive_count = int(count * 0.50)
     negative_count = int(count * 0.25)
     neutral_count = count - positive_count - negative_count
@@ -240,102 +233,66 @@ def generate_all_reviews(count: int = REVIEW_TARGET_COUNT) -> list[dict]:
     return reviews
 
 
-def seed_shoppingmall_reviews(count: int = REVIEW_TARGET_COUNT) -> int:
-    """`shop_reviews` 에 더미 리뷰를 멱등 INSERT 한다.
-
-    멱등성:
-    - `id` 를 명시하고 `ON CONFLICT (id) DO NOTHING` 사용 → 기존 row 보존, 누락분만 추가.
-    - 시작 시점 row 수가 `count` 이상이면 전체 스킵.
-
-    Returns:
-        실제로 추가된 row 수.
-    """
-    random.seed(REVIEW_RANDOM_SEED)
-    reviews = generate_all_reviews(count)
-
+def seed_to_db(reviews: list[dict]) -> None:
     db = SessionLocal()
     try:
-        existing_count = int(
-            db.execute(text("SELECT COUNT(*) FROM shop_reviews")).scalar() or 0
-        )
-        if existing_count >= count:
-            _log(
-                f"shop_reviews 에 이미 {existing_count}건이 있어 시드를 스킵합니다 (목표 {count})."
-            )
-            return 0
-
-        _log(
-            f"shop_reviews 멱등 INSERT 시작 (현재 {existing_count}건 -> 목표 {count}건)"
-        )
+        result = db.execute(text("SELECT COUNT(*) FROM shop_reviews"))
+        existing_count = result.scalar()
+        info(f"기존 리뷰 수: {existing_count}건 -> 전부 삭제")
+        db.execute(text("DELETE FROM shop_reviews"))
 
         batch_size = 500
         total = len(reviews)
-        attempted = 0
-
-        if total == 0:
-            # generate_all_reviews 가 0건을 만들면 적재할 게 없다 — 무의미한 SQL/commit 을
-            # 피하고 즉시 종료. ZeroDivisionError 진행률 계산도 자연스럽게 회피된다.
-            _log("생성된 리뷰가 0건 — INSERT 를 건너뜁니다.")
-            return 0
+        inserted = 0
 
         for i in range(0, total, batch_size):
             batch = reviews[i : i + batch_size]
-            values = [
-                {
-                    "id": review["id"],
-                    "product_id": review["product_id"],
-                    "user_id": review["user_id"],
-                    "rating": review["rating"],
-                    "content": review["content"],
-                    "created_at": review["created_at"],
-                }
-                for review in batch
-            ]
+            values = []
+            for review in batch:
+                values.append(
+                    {
+                        "product_id": review["product_id"],
+                        "user_id": review["user_id"],
+                        "rating": review["rating"],
+                        "content": review["content"],
+                        "created_at": review["created_at"],
+                    }
+                )
+
             db.execute(
                 text(
                     """
-                    INSERT INTO shop_reviews
-                        (id, product_id, user_id, rating, content, created_at)
-                    VALUES
-                        (:id, :product_id, :user_id, :rating, :content, :created_at)
-                    ON CONFLICT (id) DO NOTHING
+                    INSERT INTO shop_reviews (product_id, user_id, rating, content, created_at)
+                    VALUES (:product_id, :user_id, :rating, :content, :created_at)
                     """
                 ),
                 values,
             )
-            attempted += len(batch)
-            # 위 early return 이 total==0 을 막아주지만, 진행률 계산은 belt-and-suspenders
-            # 로 방어적 형태를 유지 — 향후 누가 early return 을 옮기더라도 깨지지 않도록.
-            percent = attempted * 100 // total if total else 100
-            _log(f"진행: {attempted}/{total}건 ({percent}%)")
+            inserted += len(batch)
+            info(f"진행: {inserted}/{total}건 ({inserted * 100 // total}%)")
 
+        result = db.execute(text("SELECT COUNT(*) FROM shop_reviews"))
+        final_count = result.scalar()
+        info(f"ShoppingMall 리뷰 재시드 완료: {final_count} rows")
         db.commit()
-
-        # explicit id 로 INSERT 했으므로 `shop_reviews_id_seq` 가 max(id) 까지 따라잡지
-        # 못한 상태 — 이후 정상 INSERT (id 자동 생성) 가 sequence 1부터 시도하다 PK conflict
-        # 가 발생한다. setval 로 sequence 를 max(id) 로 동기화한다.
-        # `setval(seq, x, true)` → 다음 nextval() 은 x+1 을 반환. COALESCE 는 빈 테이블 가드.
-        db.execute(
-            text(
-                """
-                SELECT setval(
-                    pg_get_serial_sequence('shop_reviews', 'id'),
-                    COALESCE((SELECT MAX(id) FROM shop_reviews), 0),
-                    true
-                )
-                """
-            )
-        )
-        db.commit()
-
-        final_count = int(
-            db.execute(text("SELECT COUNT(*) FROM shop_reviews")).scalar() or 0
-        )
-        added = max(0, final_count - existing_count)
-        _log(f"shop_reviews 시드 완료: {final_count}건 (이번 추가 {added}건)")
-        return added
     except Exception:
         db.rollback()
         raise
     finally:
         db.close()
+
+
+def main() -> int:
+    set_log_prefix(LOG_PREFIX)
+    try:
+        random.seed(42)
+        reviews = generate_all_reviews(1000)
+        seed_to_db(reviews)
+        return 0
+    except Exception as exc:
+        error(str(exc))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -9,8 +9,16 @@ from app.models.pesticide import (
 )
 from app.models.ncpms import NcpmsDiagnosis
 from app.models.daily_journal import DailyJournal, DailyJournalRevision
+from app.models.ai_agent import (
+    AiAgentActivityDaily,
+    AiAgentActivityHourly,
+    AiAgentDecision,
+)
 
 __all__ = [
+    "AiAgentActivityDaily",
+    "AiAgentActivityHourly",
+    "AiAgentDecision",
     "DailyJournal",
     "DailyJournalRevision",
     "JournalEntry",
