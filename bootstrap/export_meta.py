@@ -1,0 +1,216 @@
+"""모델 메타 + 시드 기대값을 JSON 으로 export 한다.
+
+NodeJS 자동화(`automation/`) 가 DB 검증 시 단일 진실 소스로 사용한다.
+
+NodeJS 호출 예:
+    python bootstrap/export_meta.py > automation/meta.json
+
+출력 JSON 구조:
+{
+  "farmos": {
+    "tables": {
+      "<table_name>": {
+        "columns": [{"name": "...", "type": "...", "nullable": true, "default": "..."}],
+        "primary_key": ["..."]
+      }
+    },
+    "expected_row_counts": {"users": 2, ...},
+    "post_pesticide_min_row_counts": {"rag_pesticide_products": 1, ...},
+    "ai_agent_default_count": 30
+  },
+  "shoppingmall": {
+    "tables": {...},
+    "expected_row_counts": {...},
+    "ready_row_counts": {...},
+    "review_target_count": 1000
+  }
+}
+
+`bootstrap/create_tables.py` 와 같은 이유로 두 backend 를 subprocess 로 분리한다.
+각 venv 의 Python 이 자기 모델을 import 해서 SQLAlchemy 메타데이터를 직접 export 하므로
+정적 파싱 대비 안정적이다.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+FARMOS_BACKEND = ROOT / "backend"
+SHOP_BACKEND = ROOT / "shopping_mall" / "backend"
+
+
+def _venv_python(project_dir: Path) -> str:
+    if os.name == "nt":
+        candidate = project_dir / ".venv" / "Scripts" / "python.exe"
+    else:
+        candidate = project_dir / ".venv" / "bin" / "python"
+    return str(candidate) if candidate.exists() else sys.executable
+
+
+def _run_meta_extractor(label: str, python_exe: str, cwd: Path, code: str) -> dict:
+    env = os.environ.copy()
+    pythonpath_parts = [str(ROOT)]
+    if existing := env.get("PYTHONPATH"):
+        pythonpath_parts.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    # 자식 Python 의 stdout/stderr 를 UTF-8 로 강제 (Windows 콘솔 cp949 회피)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+
+    result = subprocess.run(
+        [python_exe, "-c", code],
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        sys.stderr.write(
+            f"[export_meta] {label} 실패 (exit={result.returncode})\n"
+            f"--- stderr ---\n{result.stderr}\n"
+        )
+        raise SystemExit(result.returncode)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(
+            f"[export_meta] {label} JSON 파싱 실패: {exc}\n"
+            f"--- stdout ---\n{result.stdout[:2000]}\n"
+        )
+        raise SystemExit(1) from exc
+
+
+# 두 추출기 모두 stdout 에 JSON 한 줄을 출력한다(다른 print 금지).
+# Base.metadata.tables 를 순회하여 컬럼/타입/nullable/default 를 dict 로 정규화.
+FARMOS_META_CODE = r"""
+import json
+import sys
+import bootstrap.farmos_seed  # FarmOS 모델 등록
+from bootstrap.farmos_seed import EXPECTED_ROW_COUNTS, POST_PESTICIDE_MIN_ROW_COUNTS
+from bootstrap.seed_ai_agent import DEFAULT_DECISION_COUNT
+from bootstrap.pesticide import Base as PesticideBase
+from app.core.database import Base as FarmosBase
+
+
+def _serialize_metadata(metadata):
+    out = {}
+    for table_name, table in metadata.tables.items():
+        cols = []
+        for col in table.columns:
+            default_value = None
+            if col.default is not None:
+                # ORM-side default: callable/scalar/Sequence 등 다양 — repr 로 표시.
+                default_value = repr(getattr(col.default, "arg", col.default))
+            elif col.server_default is not None:
+                default_value = str(col.server_default.arg) if hasattr(col.server_default, "arg") else str(col.server_default)
+            cols.append({
+                "name": col.name,
+                "type": str(col.type),
+                "nullable": bool(col.nullable),
+                "default": default_value,
+            })
+        pk = [c.name for c in table.primary_key.columns]
+        out[table_name] = {"columns": cols, "primary_key": pk}
+    return out
+
+
+payload = {
+    "tables": {
+        **_serialize_metadata(FarmosBase.metadata),
+        **_serialize_metadata(PesticideBase.metadata),
+    },
+    "expected_row_counts": dict(EXPECTED_ROW_COUNTS),
+    "post_pesticide_min_row_counts": dict(POST_PESTICIDE_MIN_ROW_COUNTS),
+    "ai_agent_default_count": int(DEFAULT_DECISION_COUNT),
+}
+
+# stdout 으로만 JSON, 그 외 출력 금지.
+sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+"""
+
+
+SHOP_META_CODE = r"""
+import json
+import sys
+import bootstrap.shoppingmall_seed  # ShoppingMall 모델 등록
+from bootstrap.shoppingmall_seed import (
+    EXPECTED_ROW_COUNTS,
+    READY_ROW_COUNTS,
+    SHOP_TABLES,
+)
+from bootstrap.shoppingmall_review_seed import REVIEW_TARGET_COUNT
+from app.database import Base as ShopBase
+
+
+def _serialize_metadata(metadata):
+    out = {}
+    for table_name, table in metadata.tables.items():
+        cols = []
+        for col in table.columns:
+            default_value = None
+            if col.default is not None:
+                default_value = repr(getattr(col.default, "arg", col.default))
+            elif col.server_default is not None:
+                default_value = str(col.server_default.arg) if hasattr(col.server_default, "arg") else str(col.server_default)
+            cols.append({
+                "name": col.name,
+                "type": str(col.type),
+                "nullable": bool(col.nullable),
+                "default": default_value,
+            })
+        pk = [c.name for c in table.primary_key.columns]
+        out[table_name] = {"columns": cols, "primary_key": pk}
+    return out
+
+
+payload = {
+    "tables": _serialize_metadata(ShopBase.metadata),
+    "expected_row_counts": dict(EXPECTED_ROW_COUNTS),
+    "ready_row_counts": dict(READY_ROW_COUNTS),
+    "shop_tables_order": list(SHOP_TABLES),
+    "review_target_count": int(REVIEW_TARGET_COUNT),
+}
+
+sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+"""
+
+
+def main() -> int:
+    # Windows 콘솔의 cp949 기본 인코딩이 JSON 출력 시 한글 깨짐을 유발하므로 UTF-8 강제.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+
+    farmos_meta = _run_meta_extractor(
+        "FarmOS 메타 추출",
+        _venv_python(FARMOS_BACKEND),
+        FARMOS_BACKEND,
+        FARMOS_META_CODE,
+    )
+    shop_meta = _run_meta_extractor(
+        "ShoppingMall 메타 추출",
+        _venv_python(SHOP_BACKEND),
+        SHOP_BACKEND,
+        SHOP_META_CODE,
+    )
+
+    payload = {
+        "farmos": farmos_meta,
+        "shoppingmall": shop_meta,
+    }
+
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2))
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

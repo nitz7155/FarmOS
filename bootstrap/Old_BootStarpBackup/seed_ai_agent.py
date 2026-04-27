@@ -1,18 +1,17 @@
-"""AI Agent decisions 시드 (Design Ref §8.6 - L2/L3 E2E 테스트용 30건 샘플).
+"""AI Agent decisions seed 스크립트.
 
-`bootstrap/insert_data.py`(Phase 2) 가 `seed_ai_agent()` 를 호출한다.
+Design Ref §8.6 — L2/L3 E2E 테스트용 30건 샘플.
 
-멱등성:
-- `ai_agent_decisions` 는 `INSERT ... ON CONFLICT (id) DO NOTHING` 사용.
-- `ai_agent_activity_daily/hourly` 는 ON CONFLICT DO UPDATE(누적 카운트).
-- 같은 `id`(uuid4) 가 새로 생성되므로 재실행 시 중복 30건이 추가된다.
-  대량 누적이 부담스러우면 NodeJS 검증층에서 row 수를 보고 호출 여부를 결정한다.
+실행:
+    cd backend
+    uv run python scripts/seed_ai_agent.py
+
+멱등: `INSERT ... ON CONFLICT (id) DO NOTHING`. 재실행해도 중복 생성되지 않는다.
 """
 
-# ruff: noqa: E402
-# pyright: reportMissingImports=false, reportMissingModuleSource=false
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import uuid
@@ -21,13 +20,11 @@ from pathlib import Path
 
 # app 모듈 접근 위해 backend/ 를 sys.path 에 추가
 ROOT = Path(__file__).resolve().parents[1]
-BACKEND_DIR = ROOT / "backend"
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
+sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import text
+from sqlalchemy import text  # noqa: E402
 
-from app.core.database import async_session
+from app.core.database import async_session, init_db  # noqa: E402
 
 CONTROL_TYPES = ["ventilation", "irrigation", "lighting", "shading"]
 PRIORITIES = ["emergency", "high", "medium", "low"]
@@ -55,8 +52,6 @@ REASONS = {
         "흐림 전환 → 차광 해제",
     ],
 }
-
-DEFAULT_DECISION_COUNT = 30
 
 
 def _make_decision(now: datetime, i: int) -> dict:
@@ -101,17 +96,8 @@ def _make_decision(now: datetime, i: int) -> dict:
     }
 
 
-async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
-    """AI Agent decisions 더미 데이터를 생성/적재한다.
-
-    `ai_agent_decisions` 테이블에 `INSERT ... ON CONFLICT (id) DO NOTHING` 으로 적재하고,
-    `ai_agent_activity_daily/hourly` 집계를 UPSERT 한다.
-
-    이 함수는 테이블이 이미 존재한다고 가정한다(Phase 1에서 만들어졌어야 함).
-
-    Returns:
-        (inserted_decisions, summary_bumps) 튜플.
-    """
+async def seed(count: int = 30) -> tuple[int, int]:
+    await init_db()  # 테이블이 없으면 생성 (멱등)
     now = datetime.now(timezone.utc)
 
     inserted_decisions = 0
@@ -121,14 +107,7 @@ async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
         for i in range(count):
             d = _make_decision(now, i)
 
-            # duration_ms 가 None 일 때 평균 분모/분자에서 제외하기 위한 사전 계산.
-            # asyncpg prepared statement 가 동일 파라미터를 여러 컨텍스트(IS NULL/산술)에서
-            # 쓰면 타입 추론에 실패(AmbiguousParameterError)하므로 SQL 에는 항상 정수만 넘긴다.
-            dur_value = d["duration_ms"]
-            dur_inc = 0 if dur_value is None else 1
-            dur_add = 0 if dur_value is None else dur_value
-
-            # 1) 원본 insert (멱등 — 새 uuid 라 항상 신규지만 ON CONFLICT 보호)
+            # 1) 원본 insert (멱등)
             result = await db.execute(
                 text(
                     """
@@ -160,21 +139,17 @@ async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
             inserted_decisions += 1
 
             # 2) 일별 집계 UPSERT
-            # avg_duration_ms 는 duration_sum / duration_count 의 캐시값.
-            # null-duration 행은 분모/분자에서 모두 제외되어 편향이 없다 (모델 docstring 참고).
             await db.execute(
                 text(
                     """
                     INSERT INTO ai_agent_activity_daily
                         (day, control_type, count, by_source, by_priority,
-                         avg_duration_ms, duration_count, duration_sum,
-                         last_at, updated_at)
+                         avg_duration_ms, last_at, updated_at)
                     VALUES
                         (:day, :ct, 1,
                          jsonb_build_object(CAST(:src AS text), 1),
                          jsonb_build_object(CAST(:pr AS text), 1),
-                         CAST(:avg_dur AS integer), :dur_inc, :dur_add,
-                         :last_at, now())
+                         :dur, :last_at, now())
                     ON CONFLICT (day, control_type) DO UPDATE SET
                         count = ai_agent_activity_daily.count + 1,
                         by_source = jsonb_set(
@@ -187,12 +162,13 @@ async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
                             ARRAY[CAST(:pr AS text)],
                             to_jsonb(COALESCE((ai_agent_activity_daily.by_priority->>:pr)::int, 0) + 1)
                         ),
-                        duration_count = ai_agent_activity_daily.duration_count + :dur_inc,
-                        duration_sum = ai_agent_activity_daily.duration_sum + :dur_add,
                         avg_duration_ms = CASE
-                            WHEN ai_agent_activity_daily.duration_count + :dur_inc = 0 THEN NULL
-                            ELSE (ai_agent_activity_daily.duration_sum + :dur_add)
-                                 / (ai_agent_activity_daily.duration_count + :dur_inc)
+                            WHEN :dur IS NULL THEN ai_agent_activity_daily.avg_duration_ms
+                            WHEN ai_agent_activity_daily.avg_duration_ms IS NULL THEN :dur
+                            ELSE (
+                                (ai_agent_activity_daily.avg_duration_ms * ai_agent_activity_daily.count + :dur)
+                                / (ai_agent_activity_daily.count + 1)
+                            )
                         END,
                         last_at = GREATEST(ai_agent_activity_daily.last_at, :last_at),
                         updated_at = now()
@@ -203,9 +179,7 @@ async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
                     "ct": d["control_type"],
                     "src": d["source"],
                     "pr": d["priority"],
-                    "avg_dur": dur_value,
-                    "dur_inc": dur_inc,
-                    "dur_add": dur_add,
+                    "dur": d["duration_ms"],
                     "last_at": d["timestamp"],
                 },
             )
@@ -251,3 +225,13 @@ async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
         await db.commit()
 
     return inserted_decisions, summary_bumps
+
+
+async def main() -> None:
+    count = int(sys.argv[1]) if len(sys.argv) > 1 else 30
+    inserted, bumps = await seed(count)
+    print(f"[seed_ai_agent] inserted_decisions={inserted} summary_bumps={bumps} (requested={count})")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

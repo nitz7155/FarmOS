@@ -1,35 +1,14 @@
-"""NCPMS(국가농작물병해충관리시스템) 진단 데이터 시드.
-
-`tools/ncpms-api-crawler/json_raw/ncpms_data.json` 을 읽어
-`ncpms_diagnoses` 테이블에 UPSERT 한다.
-
-`bootstrap/insert_data.py`(Phase 2) 가 `seed_ncpms()` 를 호출한다.
-JSON 파일이 없으면 조용히 스킵한다(의도적).
-"""
-
-# ruff: noqa: E402
-# pyright: reportMissingImports=false, reportMissingModuleSource=false
-from __future__ import annotations
-
 import asyncio
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
+from _bootstrap_common import info
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-ROOT = Path(__file__).resolve().parents[1]
-BACKEND_DIR = ROOT / "backend"
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
-
+ROOT = Path(__file__).resolve().parent.parent
 NCPMS_JSON_PATH = ROOT / "tools" / "ncpms-api-crawler" / "json_raw" / "ncpms_data.json"
-
-
-def _log(message: str) -> None:
-    print(f"[ncpms_seed] {message}")
 
 
 def _load_json_rows(path: Path) -> list[dict[str, Any]]:
@@ -69,45 +48,35 @@ def _build_payload(items: list[dict[str, Any]]) -> list[dict[str, str]]:
     return payload
 
 
-async def seed_ncpms() -> int:
-    """NCPMS 진단 데이터를 UPSERT(ON CONFLICT DO UPDATE) 한다.
-
-    JSON 파일이 없으면 0 을 반환하며 조용히 스킵한다.
-
-    Returns:
-        UPSERT 처리한 row 수(payload 기준).
-    """
-    _log("NCPMS 캐시 테이블 적재 시작")
+async def run_ncpms_seed(_db_conf: dict[str, str]) -> None:
+    # _db_conf 파라미터는 bootstrap.py (farmos_seed.py 등)와의 인터페이스 호환성을 위해 유지합니다.
+    info("NCPMS 캐시 테이블 적재 스크립트 실행")
     if not NCPMS_JSON_PATH.exists():
-        _log(f"NCPMS 데이터 파일 없음: {NCPMS_JSON_PATH} (의도적 스킵)")
-        return 0
+        info(f"NCPMS 데이터 파일 없음: {NCPMS_JSON_PATH} (의도적 스킵 가능)")
+        return
 
     try:
         items = await asyncio.to_thread(_load_json_rows, NCPMS_JSON_PATH)
     except (OSError, json.JSONDecodeError) as exc:
-        _log(f"NCPMS 데이터 파일 읽기 실패: {exc}")
-        return 0
+        info(f"NCPMS 데이터 파일 읽기 실패: {exc}")
+        return
 
     if not items:
-        _log("빈 JSON 파일 - 스킵")
-        return 0
+        info("빈 JSON 파일 - 스킵")
+        return
 
     payload = _build_payload(items)
     if not payload:
-        _log("유효한 NCPMS 데이터가 없어 적재를 스킵합니다.")
-        return 0
+        info("유효한 NCPMS 데이터가 없어 적재를 스킵합니다.")
+        return
 
     from app.core.database import async_session
     from app.models.ncpms import NcpmsDiagnosis
 
     async with async_session() as db:
-        count_result = await db.execute(
-            select(func.count()).select_from(NcpmsDiagnosis)
-        )
+        count_result = await db.execute(select(func.count()).select_from(NcpmsDiagnosis))
         current_count = int(count_result.scalar() or 0)
-        _log(
-            f"NCPMS 적재 진행 (DB {current_count}건 -> JSON {len(payload)}건, UPSERT)"
-        )
+        info(f"NCPMS 적재 시작 (DB {current_count}건 -> JSON {len(payload)}건, UPSERT)")
 
         batch_size = 500
         for i in range(0, len(payload), batch_size):
@@ -127,5 +96,4 @@ async def seed_ncpms() -> int:
 
         await db.commit()
 
-    _log(f"NCPMS 데이터 적재 완료 (총 {len(payload)}건)")
-    return len(payload)
+    info(f"NCPMS 데이터 적재 완료 (총 {len(payload)}건)")
