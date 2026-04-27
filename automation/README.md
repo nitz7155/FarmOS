@@ -18,7 +18,7 @@ NodeJS 는 backend/frontend 자체는 실행하지 않는다 — C# `ServerManag
 
 | 도구 | 용도 | 확인 방법 |
 |---|---|---|
-| Node.js 18+ | `.mjs` ESM 실행 | `node --version` |
+| Node.js 22+ | `.mjs` ESM 실행 | `node --version` |
 | `psql` | PostgreSQL 쿼리 | `psql --version` (PATH 에 있어야 함) |
 | `python` | bootstrap 스크립트 호출 | `python --version` |
 
@@ -55,6 +55,7 @@ C# `AppSettings.Instance` 가 자식 프로세스에 주입한다.
 | `10` | 컬럼 타입 drift 감지 (자동 ALTER 금지) | 메시지박스 표시, `StartAll()` 중단 |
 | `20` | 재검증 실패 (시드 후에도 결함) | 로그 표시, `StartAll()` 중단 |
 | `30` | 환경 오류 (psql/python/메타 로드) | 메시지박스 표시, `StartAll()` 중단 |
+| `40` | Phase 호출 실패 (Python 시드 스크립트 비정상 종료) | 로그 표시, `StartAll()` 중단 |
 | `1`  | 예상치 못한 예외 | 로그 표시, `StartAll()` 중단 |
 
 ## 분기 (plan §2)

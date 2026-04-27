@@ -1,7 +1,7 @@
 """농약 RAG 테이블의 SQLAlchemy 모델 정의 + 빈 테이블 생성 헬퍼.
 
 원본 풀 ETL 스크립트(JSON raw → 정제 → 적재)는
-`bootstrap/Old_BootStarpBackup/pesticide.py` 에 보존되어 있다(있을 경우).
+`bootstrap/Old_BootStrapBackup/pesticide.py` 에 보존되어 있다(있을 경우).
 JSON raw 파일은 git에 올리지 않으므로 자동화에서 데이터 적재는 제외한다.
 
 Phase 1(빈 테이블 생성)에서만 이 모듈을 사용한다.

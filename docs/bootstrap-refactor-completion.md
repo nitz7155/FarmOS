@@ -97,7 +97,7 @@ Phase 1/2 실행 중 두 가지 추가 결함이 표면화되어 즉시 수정.
 
 ### 4.2 구성
 
-```
+```text
 automation/
 ├── README.md          # 환경변수, exit code 규약, 분기표
 ├── run.mjs            # 단일 진입점 (의존성 0)
@@ -106,7 +106,7 @@ automation/
 
 ### 4.3 실행 흐름 (plan §1)
 
-```
+```text
 [1] preflightCheck()       — postgres DB 접속으로 인증/연결/대상 DB 존재 확인
 [2] loadMeta()             — bootstrap/export_meta.py 호출, JSON 받기
 [3] verifyDatabase()       — psql 로 information_schema 조회 (테이블/컬럼/row 수)
@@ -182,7 +182,7 @@ plan §4 "자동 ALTER 금지" 와 §6.5 "drift 시 중단" 정책을 다음과 
 
 ### 5.2 새 흐름
 
-```
+```text
 [서버시작 클릭]
   ↓
 1. ProjectRoot 확인 (실패 → 메시지박스 + 종료)
@@ -307,7 +307,7 @@ Visual Studio `Release` 빌드 → `Web_Starter.exe` + `Web_Starter.exe.config` 
 | 루트 `bootstrap.py` | broken (예상됨) | NodeJS 도입 + `start-all.bat` 폐기 시점 |
 | `bootstrap/farmos.py` | broken (서비스 실행 래퍼, NodeJS 가 대체) | 동상 |
 | `bootstrap/shoppingmall.py` | broken (서비스 실행 래퍼) | 동상 |
-| `bootstrap/Old_BootStarpBackup/` | 새 fork 환경엔 미존재 | 영구 유보 (현재 자동화 영향 없음) |
+| `bootstrap/Old_BootStrapBackup/` | 새 fork 환경엔 미존재 | 영구 유보 (현재 자동화 영향 없음) |
 | `Web_Starter/DatabaseChecker.cs` | 호출 0, obsolete | C# 측 정리 시점 (Npgsql 의존도 동반 제거 가능) |
 | `Web_Starter/Npgsql` PackageReference | DatabaseChecker 동행 정리 | 동상 |
 

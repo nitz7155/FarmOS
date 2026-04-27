@@ -39,17 +39,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _venv_utils import _venv_python
+
 ROOT = Path(__file__).resolve().parents[1]
 FARMOS_BACKEND = ROOT / "backend"
 SHOP_BACKEND = ROOT / "shopping_mall" / "backend"
-
-
-def _venv_python(project_dir: Path) -> str:
-    if os.name == "nt":
-        candidate = project_dir / ".venv" / "Scripts" / "python.exe"
-    else:
-        candidate = project_dir / ".venv" / "bin" / "python"
-    return str(candidate) if candidate.exists() else sys.executable
 
 
 def _run_meta_extractor(label: str, python_exe: str, cwd: Path, code: str) -> dict:

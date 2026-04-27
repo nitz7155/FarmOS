@@ -9,7 +9,7 @@
  *   [4] 재검증
  *   [5] exit code 반환
  *
- * 의존성: 없음. Node 18+ 기본 모듈(child_process, path, url) + 시스템 `psql`, `python` 만 필요.
+ * 의존성: 없음. Node 22+ 기본 모듈(child_process, path, url) + 시스템 `psql`, `python` 만 필요.
  *
  * 실행: `node automation/run.mjs`
  *
@@ -48,9 +48,23 @@ const section = (t) => process.stdout.write(`\n${PREFIX} === ${t} ===\n`);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = process.env.FARMOS_PROJECT_ROOT || path.resolve(here, "..");
 
+const EXIT_OK = 0;
+const EXIT_COLUMN_DRIFT = 10;
+const EXIT_REVERIFY_FAILED = 20;
+const EXIT_ENV_ERROR = 30;
+const EXIT_PHASE_FAILED = 40;
+const EXIT_UNEXPECTED = 1;
+
+const rawPort = process.env.PG_PORT || process.env.PGPORT || "5432";
+const parsedPort = Number.parseInt(rawPort, 10);
+if (!Number.isFinite(parsedPort)) {
+  error(`PG_PORT/PGPORT 값이 유효한 숫자가 아닙니다: "${rawPort}"`);
+  process.exit(EXIT_ENV_ERROR);
+}
+
 const dbConf = {
   host: process.env.PG_HOST || process.env.PGHOST || "localhost",
-  port: Number.parseInt(process.env.PG_PORT || process.env.PGPORT || "5432", 10),
+  port: parsedPort,
   database: process.env.PG_DATABASE || process.env.PGDATABASE || "farmos",
   user: process.env.PG_USER || process.env.PGUSER || "postgres",
   password: process.env.PG_PASSWORD || process.env.PGPASSWORD || "root",
@@ -105,6 +119,7 @@ function safeDecodeStderr(buffer) {
 
 function psqlExec(sql, opts = {}) {
   const args = [
+    "-X",                   // 사용자 .psqlrc 무시 — 출력 포맷이 사용자 설정에 의해 바뀌지 않도록.
     "-h", dbConf.host,
     "-p", String(dbConf.port),
     "-U", dbConf.user,
@@ -149,6 +164,7 @@ function preflightCheck() {
   const targetDb = dbConf.database;
   const sql = `SELECT 1 FROM pg_database WHERE datname='${targetDb.replace(/'/g, "''")}'`;
   const args = [
+    "-X",                   // 사용자 .psqlrc 무시 — preflight 결과를 결정적으로 유지.
     "-h", dbConf.host,
     "-p", String(dbConf.port),
     "-U", dbConf.user,
@@ -349,8 +365,18 @@ function verifyDatabase(meta) {
     }
 
     // 3) row 수 검증 — 각 테이블 COUNT(*) (Python 측 ready_row_counts/expected_row_counts 합산)
-    // 주의: post_pesticide_min_row_counts 는 자동화에서 제외(plan §3.4) — JSON raw 가
-    // git 미포함이라 사용자가 수동 적재한다. 검증에 포함하면 영구 row deficit 으로 false fail.
+    //
+    // 현재 meta.farmos.expected_row_counts 는 사실상 {"users": 2} 하나뿐이므로,
+    // FarmOS 쪽 row 검증은 실질적으로 users 테이블만 확인한다.
+    //
+    // 의도적으로 이 루프에서 제외되는 메타값 (plan §3.4):
+    //   - meta.farmos.post_pesticide_min_row_counts: 농약 RAG JSON/raw 데이터가 git 에
+    //     포함되지 않고 사용자가 수동 적재하기 때문. 자동 검증에 넣으면 영구 row deficit
+    //     으로 false fail 이 난다. → 결과적으로 ncpms 계열 테이블은 이 루프가 검사하지 않음.
+    //   - meta.farmos.ai_agent_default_count: 시드 생성 파라미터(기본 30개)이지 검증
+    //     임계치가 아니다. → 결과적으로 ai_agent 테이블은 이 루프가 검사하지 않음.
+    //
+    // shoppingmall 은 ready_row_counts 를 통해 review/카테고리 등을 모두 검사한다.
     const rowExp = {
       ...meta.farmos.expected_row_counts,
       ...meta.shoppingmall.ready_row_counts,
@@ -415,12 +441,6 @@ function runPhase(phase) {
 // ============================================================================
 // main
 // ============================================================================
-const EXIT_OK = 0;
-const EXIT_COLUMN_DRIFT = 10;
-const EXIT_REVERIFY_FAILED = 20;
-const EXIT_ENV_ERROR = 30;
-const EXIT_UNEXPECTED = 1;
-
 function main() {
   section("자동화 시작");
   info(`projectRoot=${projectRoot}`);
@@ -488,7 +508,7 @@ function main() {
     }
   } catch (e) {
     error(`Phase 호출 실패: ${e.message}`);
-    return EXIT_UNEXPECTED;
+    return EXIT_PHASE_FAILED;
   }
 
   let after;

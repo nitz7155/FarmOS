@@ -272,6 +272,12 @@ def seed_shoppingmall_reviews(count: int = REVIEW_TARGET_COUNT) -> int:
         total = len(reviews)
         attempted = 0
 
+        if total == 0:
+            # generate_all_reviews 가 0건을 만들면 적재할 게 없다 — 무의미한 SQL/commit 을
+            # 피하고 즉시 종료. ZeroDivisionError 진행률 계산도 자연스럽게 회피된다.
+            _log("생성된 리뷰가 0건 — INSERT 를 건너뜁니다.")
+            return 0
+
         for i in range(0, total, batch_size):
             batch = reviews[i : i + batch_size]
             values = [
@@ -298,8 +304,28 @@ def seed_shoppingmall_reviews(count: int = REVIEW_TARGET_COUNT) -> int:
                 values,
             )
             attempted += len(batch)
-            _log(f"진행: {attempted}/{total}건 ({attempted * 100 // total}%)")
+            # 위 early return 이 total==0 을 막아주지만, 진행률 계산은 belt-and-suspenders
+            # 로 방어적 형태를 유지 — 향후 누가 early return 을 옮기더라도 깨지지 않도록.
+            percent = attempted * 100 // total if total else 100
+            _log(f"진행: {attempted}/{total}건 ({percent}%)")
 
+        db.commit()
+
+        # explicit id 로 INSERT 했으므로 `shop_reviews_id_seq` 가 max(id) 까지 따라잡지
+        # 못한 상태 — 이후 정상 INSERT (id 자동 생성) 가 sequence 1부터 시도하다 PK conflict
+        # 가 발생한다. setval 로 sequence 를 max(id) 로 동기화한다.
+        # `setval(seq, x, true)` → 다음 nextval() 은 x+1 을 반환. COALESCE 는 빈 테이블 가드.
+        db.execute(
+            text(
+                """
+                SELECT setval(
+                    pg_get_serial_sequence('shop_reviews', 'id'),
+                    COALESCE((SELECT MAX(id) FROM shop_reviews), 0),
+                    true
+                )
+                """
+            )
+        )
         db.commit()
 
         final_count = int(

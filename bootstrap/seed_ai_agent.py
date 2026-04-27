@@ -3,10 +3,13 @@
 `bootstrap/insert_data.py`(Phase 2) 가 `seed_ai_agent()` 를 호출한다.
 
 멱등성:
-- `ai_agent_decisions` 는 `INSERT ... ON CONFLICT (id) DO NOTHING` 사용.
-- `ai_agent_activity_daily/hourly` 는 ON CONFLICT DO UPDATE(누적 카운트).
-- 같은 `id`(uuid4) 가 새로 생성되므로 재실행 시 중복 30건이 추가된다.
-  대량 누적이 부담스러우면 NodeJS 검증층에서 row 수를 보고 호출 여부를 결정한다.
+- `ai_agent_decisions` id 는 루프 인덱스 ``i`` 로부터 ``uuid5`` 로 결정되므로
+  같은 ``i`` 는 매번 같은 id 를 produce → `INSERT ... ON CONFLICT (id) DO NOTHING`
+  가 실제로 작동한다 (이전엔 ``uuid4`` 라 매 실행마다 30건이 누적됐다).
+- 결과적으로 `ai_agent_activity_daily/hourly` 의 누적 UPSERT 도 같이 멱등 —
+  decisions 가 conflict 면 ``result.rowcount == 0`` 분기로 요약 갱신도 건너뛴다.
+- 추가 안전장치로 함수 시작 시 row 수가 목표(``count``) 이상이면 early return
+  (`shoppingmall_review_seed` 와 동일한 패턴 — 60+회 SQL 호출을 절약).
 """
 
 # ruff: noqa: E402
@@ -58,6 +61,10 @@ REASONS = {
 
 DEFAULT_DECISION_COUNT = 30
 
+# ai_agent 시드 전용 고정 namespace — uuid5 입력으로 i 만 들어가면 같은 결과를 보장.
+# 실 운영 Relay 가 생성하는 임의 UUID v4 와 충돌할 확률은 무시 가능 (uuid5 는 다른 비트 패턴).
+SEED_NAMESPACE = uuid.UUID("a1f4c8e0-7b3d-4e9a-9c5f-1d8b6e0a3c2f")
+
 
 def _make_decision(now: datetime, i: int) -> dict:
     ct = CONTROL_TYPES[i % 4]
@@ -66,7 +73,7 @@ def _make_decision(now: datetime, i: int) -> dict:
     ts = now - timedelta(minutes=i * 17)  # 과거로 분산
     reasons = REASONS[ct]
     return {
-        "id": str(uuid.uuid4()),
+        "id": str(uuid.uuid5(SEED_NAMESPACE, f"ai-agent-decision-{i}")),
         "timestamp": ts,
         "control_type": ct,
         "priority": pr,
@@ -104,10 +111,14 @@ def _make_decision(now: datetime, i: int) -> dict:
 async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
     """AI Agent decisions 더미 데이터를 생성/적재한다.
 
-    `ai_agent_decisions` 테이블에 `INSERT ... ON CONFLICT (id) DO NOTHING` 으로 적재하고,
-    `ai_agent_activity_daily/hourly` 집계를 UPSERT 한다.
+    `ai_agent_decisions` 테이블에 deterministic id(uuid5) 로
+    `INSERT ... ON CONFLICT (id) DO NOTHING` 적재하고, `ai_agent_activity_daily/hourly`
+    집계를 UPSERT 한다.
 
-    이 함수는 테이블이 이미 존재한다고 가정한다(Phase 1에서 만들어졌어야 함).
+    멱등성: 같은 ``i`` 는 같은 id 를 produce 하므로 재실행해도 row 가 누적되지 않는다.
+    추가로 시작 시점에 row 수가 ``count`` 이상이면 즉시 return (review_seed 패턴).
+
+    이 함수는 테이블이 이미 존재한다고 가정한다(Phase 1 에서 만들어졌어야 함).
 
     Returns:
         (inserted_decisions, summary_bumps) 튜플.
@@ -118,6 +129,13 @@ async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
     summary_bumps = 0
 
     async with async_session() as db:
+        existing_count = (
+            await db.execute(text("SELECT COUNT(*) FROM ai_agent_decisions"))
+        ).scalar_one() or 0
+        if existing_count >= count:
+            # 이미 충분히 시드된 상태 — 30+ 회의 INSERT/UPSERT SQL 을 통째로 스킵.
+            return 0, 0
+
         for i in range(count):
             d = _make_decision(now, i)
 
@@ -128,7 +146,8 @@ async def seed_ai_agent(count: int = DEFAULT_DECISION_COUNT) -> tuple[int, int]:
             dur_inc = 0 if dur_value is None else 1
             dur_add = 0 if dur_value is None else dur_value
 
-            # 1) 원본 insert (멱등 — 새 uuid 라 항상 신규지만 ON CONFLICT 보호)
+            # 1) 원본 insert — id 가 i 로부터 deterministic(uuid5) 이라 ON CONFLICT 가 실제 작동.
+            #    rowcount == 0 (이미 존재) 이면 아래 daily/hourly UPSERT 도 함께 건너뛴다.
             result = await db.execute(
                 text(
                     """

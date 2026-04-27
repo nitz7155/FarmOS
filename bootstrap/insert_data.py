@@ -15,7 +15,7 @@ NodeJS 자동화 스크립트가 인자 없이 호출한다:
 모든 INSERT 는 ON CONFLICT DO NOTHING/UPDATE 또는 row 수 가드로 멱등 보장.
 
 농약 RAG 데이터(rag_pesticide_*)는 자동화에서 제외 — JSON raw 가 git 미포함.
-필요 시 `bootstrap/Old_BootStarpBackup/pesticide.py` 풀 ETL 을 수동 실행.
+필요 시 `bootstrap/Old_BootStrapBackup/pesticide.py` 풀 ETL 을 수동 실행.
 """
 
 from __future__ import annotations
@@ -25,17 +25,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _venv_utils import _venv_python
+
 ROOT = Path(__file__).resolve().parents[1]
 FARMOS_BACKEND = ROOT / "backend"
 SHOP_BACKEND = ROOT / "shopping_mall" / "backend"
-
-
-def _venv_python(project_dir: Path) -> str:
-    if os.name == "nt":
-        candidate = project_dir / ".venv" / "Scripts" / "python.exe"
-    else:
-        candidate = project_dir / ".venv" / "bin" / "python"
-    return str(candidate) if candidate.exists() else sys.executable
 
 
 def _run_python_code(label: str, python_exe: str, cwd: Path, code: str) -> None:

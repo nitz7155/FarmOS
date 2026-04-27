@@ -9,7 +9,9 @@
    `bootstrap/insert_data.py`(Phase 2) 에서 호출한다.
 
 멱등성 보장:
-- `shop_categories` 에 이미 데이터가 있으면 전체 시드를 스킵한다(가산형).
+- 6개 코어 테이블(categories/stores/products/users/reviews/orders) row 수를 모두
+  검사해 — 전부 0이면 시드, 전부 EXPECTED 이상이면 스킵, 부분 상태면 자동 복구
+  불가로 판단해 안내 로그만 남기고 스킵한다(가산형).
 - 어떤 파괴적 동작(DROP/TRUNCATE/DELETE)도 수행하지 않는다.
 
 NodeJS 자동화가 정적 파싱하는 메타값:
@@ -31,6 +33,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SHOP_BACKEND_DIR = ROOT / "shopping_mall" / "backend"
 if str(SHOP_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(SHOP_BACKEND_DIR))
+
+from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.models import (
@@ -767,20 +771,61 @@ def seed_backoffice_data(db, state: SeedState) -> None:
 def seed_shoppingmall() -> int:
     """ShoppingMall 코어 + 백오피스 데이터를 시드한다.
 
-    멱등성 가드: `shop_categories` 에 데이터가 이미 있으면 전체 시드를 스킵한다.
-    이는 가산형 설계(plan §4) 와 부합한다 — 부분 시드 상태에서 PK 충돌로 손상되지 않도록
-    NodeJS 검증층이 row 수를 보고 호출 여부를 판단하는 것이 1차 게이트이고,
-    이 함수는 2차 안전장치로 동작한다.
+    멱등성 가드 — explicit id INSERT 가 들어가는 핵심 테이블(`shop_categories`,
+    `shop_stores`, `shop_products`, `shop_users`, `shop_reviews`, `shop_orders`)의
+    row 수를 모두 확인해 분기한다.
+
+    - 모두 0건 → 정상 진행 (첫 시드).
+    - 모두 ``EXPECTED_ROW_COUNTS`` 이상 → 스킵 (이미 시드 완료).
+    - 부분 상태(일부만 채워짐) → **자동 복구 불가** 이므로 스킵 + 수동 복구 안내.
+      ``seed_core_data`` 가 explicit id 로 add 하기 때문에 그대로 진행하면 PK 충돌이
+      발생한다 (plan §4 가산형 원칙 위반). NodeJS 검증층이 1차 게이트이고 이
+      함수는 2차 안전장치로 동작한다.
 
     Returns:
         실제로 시드한 경우 1, 스킵한 경우 0.
     """
     db = SessionLocal()
     try:
-        existing_categories = db.query(Category).count()
-        if existing_categories > 0:
+        # explicit id 로 INSERT 되는 테이블만 검사 — 이들이 멱등성 위험의 원천.
+        # backoffice 측(Shipment/Harvest/Revenue 등)은 ORM 이 sequence 로 id 를
+        # 발급하므로 부분 상태여도 다음 호출에서 자연스럽게 채워져 검사 불필요.
+        core_tables = {
+            "shop_categories": Category,
+            "shop_stores": Store,
+            "shop_products": Product,
+            "shop_users": User,
+            "shop_reviews": Review,
+            "shop_orders": Order,
+        }
+        counts = {name: db.query(model).count() for name, model in core_tables.items()}
+
+        all_empty = all(c == 0 for c in counts.values())
+        all_ready = all(counts[t] >= EXPECTED_ROW_COUNTS[t] for t in core_tables)
+
+        if all_ready:
             _log(
-                f"shop_categories 에 이미 {existing_categories}건이 있어 시드를 스킵합니다."
+                f"모든 코어 테이블이 EXPECTED 이상 — 시드를 스킵합니다 (counts={counts})."
+            )
+            return 0
+
+        if not all_empty:
+            # 부분 시드 상태 — seed_core_data 가 explicit id INSERT 라 멱등성이 없고,
+            # 그대로 호출하면 PK conflict 가 난다. 자동 복구 불가, 수동 처리 필요.
+            deficits = [
+                f"{t}={counts[t]}/EXPECTED {EXPECTED_ROW_COUNTS[t]}"
+                for t in core_tables
+                if counts[t] < EXPECTED_ROW_COUNTS[t]
+            ]
+            _log("부분 시드 상태 감지 — 자동 복구 불가, 수동 처리가 필요합니다.")
+            _log(f"부족한 테이블: {', '.join(deficits)}")
+            _log(f"전체 코어 row 수 스냅샷: {counts}")
+            _log(
+                "수동 복구 절차: PostgreSQL 에 접속해 다음 명령으로 코어 테이블을 비운 뒤 "
+                "자동화를 다시 실행하세요 — "
+                "`TRUNCATE shop_orders, shop_reviews, shop_users, shop_products, "
+                "shop_stores, shop_categories RESTART IDENTITY CASCADE;` "
+                "(또는 DB 자체를 drop/recreate)."
             )
             return 0
 
@@ -788,6 +833,33 @@ def seed_shoppingmall() -> int:
         state = seed_core_data(db)
         seed_backoffice_data(db, state)
         db.commit()
+
+        # explicit id 로 INSERT 한 테이블들의 sequence 를 max(id) 로 동기화.
+        # 누락 시 이후 정상 INSERT (id 자동 생성) 가 sequence 1부터 시도하다 PK conflict 발생.
+        # backoffice 측(Shipment/Harvest/Revenue/Expense/WeeklyReport/Segment/ChatLog) 은
+        # explicit id 없이 add 하므로 sequence 가 이미 정상 진행 — 대상 외.
+        for tbl in (
+            "shop_categories",
+            "shop_stores",
+            "shop_products",
+            "shop_users",
+            "shop_reviews",
+            "shop_orders",
+        ):
+            db.execute(
+                text(
+                    f"""
+                    SELECT setval(
+                        pg_get_serial_sequence(:tbl, 'id'),
+                        COALESCE((SELECT MAX(id) FROM {tbl}), 0),
+                        true
+                    )
+                    """
+                ),
+                {"tbl": tbl},
+            )
+        db.commit()
+
         _log("ShoppingMall 시드 완료")
         return 1
     except Exception:

@@ -25,18 +25,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _venv_utils import _venv_python
+
 ROOT = Path(__file__).resolve().parents[1]
 FARMOS_BACKEND = ROOT / "backend"
 SHOP_BACKEND = ROOT / "shopping_mall" / "backend"
-
-
-def _venv_python(project_dir: Path) -> str:
-    """프로젝트의 .venv python 실행파일 경로. 없으면 현재 인터프리터로 폴백."""
-    if os.name == "nt":
-        candidate = project_dir / ".venv" / "Scripts" / "python.exe"
-    else:
-        candidate = project_dir / ".venv" / "bin" / "python"
-    return str(candidate) if candidate.exists() else sys.executable
 
 
 def _run_python_code(label: str, python_exe: str, cwd: Path, code: str) -> None:
@@ -46,6 +39,9 @@ def _run_python_code(label: str, python_exe: str, cwd: Path, code: str) -> None:
     if existing := env.get("PYTHONPATH"):
         pythonpath_parts.append(existing)
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    # 자식 Python 의 stdout/stderr 를 UTF-8 로 강제 (Windows 콘솔 cp949 회피)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
 
     result = subprocess.run([python_exe, "-c", code], cwd=str(cwd), env=env)
     if result.returncode != 0:
