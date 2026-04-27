@@ -22,11 +22,23 @@ AI 기능 모음. 크게 **유틸리티**와 **에이전트 서브패키지**로
 ## ChromaDB 컬렉션
 
 ```
-faq / storage_guide / season_info          ← JSON (ai/data/)
+faq / storage_guide / season_info /        ← JSON (ai/data/)
+farm_intro
 payment_policy / delivery_policy /
 return_policy / quality_policy /           ← PDF/DOCX (ai/docs/)
 service_policy / membership_policy
 ```
+
+| 컬렉션 | 데이터 소스 | 내용 |
+|--------|------------|------|
+| `faq` | `ai/data/faq.json` | 자주 묻는 질문 |
+| `storage_guide` | `ai/data/storage_guide.json` | 농산물 보관법 |
+| `season_info` | `ai/data/season_info.json` | 제철 정보 |
+| `farm_intro` | `ai/data/farm_info.json` | 플랫폼 소개·품질 인증·협력 농가·친환경 등 |
+| `*_policy` | `ai/docs/*.pdf / *.docx` | 결제·배송·반품·품질·서비스·멤버십 정책 |
+
+> `farm_intro`가 없으면 `search_farm_info` 도구가 항상 fallback 메시지를 반환합니다.  
+> `uv run python ai/seed_rag.py` 실행 시 자동으로 포함됩니다.
 
 ---
 
@@ -54,7 +66,7 @@ OLLAMA_EMBED_MODEL=embeddinggemma:latest
 **둘 다 없는 경우 — 로컬 실행 (API 키·서버 불필요)**
 ```env
 EMBED_PROVIDER=sentence_transformers
-EMBED_MODEL=jhgan/ko-sroberta-multitask
+EMBED_MODEL=BAAI/bge-m3
 ```
 ```bash
 uv add sentence-transformers   # 최초 1회
@@ -80,4 +92,22 @@ uv run python ai/seed_rag.py
 
 # 시딩 + 검색 검증 한번에
 uv run python scripts/seed_and_verify.py
+```
+
+### BM25 한국어 토크나이저
+
+`seed_rag.py`의 `_make_tokenizer()`는 **kiwipiepy** 형태소 분석기를 우선 사용합니다.
+
+```python
+# kiwipiepy 설치된 경우 — 명사·동사·형용사·숫자·외래어 추출
+kiwi.tokenize("딸기를 보관하는 방법") → ["딸기", "보관", "방법"]
+
+# kiwipiepy 없는 경우 — 정규식 fallback (기능 저하 없음, 경고 로그 출력)
+re.findall(r"[가-힣a-zA-Z0-9]+", text)
+```
+
+kiwipiepy를 설치하면 어미 변형("딸기를" → "딸기")이 정규화되어 BM25 召回率이 향상됩니다.
+
+```bash
+uv add kiwipiepy   # 선택적 의존성
 ```

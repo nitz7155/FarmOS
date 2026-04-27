@@ -27,15 +27,16 @@ AI_DATA_DIR     # .../backend/ai/data/
 
 ## 챗봇 에이전트
 
-tool_use 기반 에이전트. Primary LLM 장애 시 Claude로 자동 전환.
+LangChain tool calling 기반 에이전트. Primary LLM 장애 시 LangChain `.with_fallbacks()` 체인으로 Claude로 자동 전환.
 
 ```
-OpenAIAgentClient (PRIMARY_LLM_*)
-  → 실패 시 ClaudeAgentClient (ANTHROPIC_API_KEY)
-    → 둘 다 실패 시 escalated=True
+ChatOpenAI (PRIMARY_LLM_*)
+  .bind_tools(tools).with_fallbacks([ChatAnthropic(...).bind_tools(tools)])
 ```
 
 **아키텍처**: `SupervisorExecutor` 오케스트레이터 → CS 서브 에이전트(10개 도구) + OrderGraph(LangGraph, 취소/교환 멀티스텝 HitL), `MultiAgentChatbotService`
+
+**모니터링**: LangSmith — `LANGCHAIN_TRACING_V2=true` 시 에이전트 루프 전체 자동 트레이싱
 
 ### 핵심 파일 맵
 
@@ -43,14 +44,12 @@ OpenAIAgentClient (PRIMARY_LLM_*)
 
 | 파일 | 역할 |
 |------|------|
-| `ai/agent/clients/base.py` | AgentClient 추상 인터페이스 |
-| `ai/agent/clients/openai.py` | Primary LLM — OpenAI 호환 |
-| `ai/agent/clients/claude.py` | Fallback LLM — Anthropic SDK |
-| `ai/agent/executor.py` | AgentExecutor 루프, RequestContext, TraceStep, ToolMetricData |
-| `ai/agent/tools.py` | TOOL_DEFINITIONS 9개, TOOL_TO_INTENT |
+| `ai/agent/llm.py` | LangChain LLM 팩토리 — `build_primary_llm()` (ChatOpenAI), `build_fallback_llm()` (ChatAnthropic) |
+| `ai/agent/executor.py` | AgentExecutor — LangChain tool calling 루프, RequestContext, TraceStep, ToolMetricData |
+| `ai/agent/cs_tools.py` | `build_cs_tools(rag, db, user_id)` 팩토리 + 10개 StructuredTool + Pydantic 스키마 |
 | `ai/agent/holiday.py` | 공휴일 API + 월별 캐시 |
-| `ai/rag.py` | retrieve() / retrieve_multiple() + distance_threshold 필터 |
-| `app/core/config.py` | Settings 클래스 — 전체 환경변수 관리 |
+| `ai/rag.py` | `retrieve()` / `retrieve_multiple()` / `hybrid_retrieve()` + distance_threshold 필터 |
+| `app/core/config.py` | Settings 클래스 — 전체 환경변수 관리 (LangSmith 포함) |
 | `app/main.py` | 에이전트 초기화 + UTF-8 로그 핸들러 |
 | `app/routers/chatbot.py` | POST /api/chatbot/ask?debug=true |
 
@@ -58,11 +57,9 @@ OpenAIAgentClient (PRIMARY_LLM_*)
 
 | 파일 | 역할 |
 |------|------|
-| `ai/agent/supervisor/executor.py` | SupervisorExecutor — 오케스트레이션 루프 |
-| `ai/agent/supervisor/tools.py` | SUPERVISOR_TOOLS (call_cs_agent, call_order_agent) |
-| `ai/agent/supervisor/prompts.py` | SUPERVISOR_SYSTEM_PROMPT |
-| `ai/agent/subagents/cs/tools.py` | CS_TOOLS — 9개 도구 서브셋 |
-| `ai/agent/subagents/cs/prompts.py` | CS_AGENT_SYSTEM_PROMPT |
+| `ai/agent/supervisor/executor.py` | SupervisorExecutor — LangChain tool calling 오케스트레이션 루프 |
+| `ai/agent/supervisor/prompts.py` | SUPERVISOR_INPUT_PROMPT / SUPERVISOR_OUTPUT_PROMPT |
+| `ai/agent/subagents/cs/prompts.py` | CS_INPUT_PROMPT / CS_OUTPUT_PROMPT |
 | `ai/agent/order_graph/state.py` | OrderState TypedDict |
 | `ai/agent/order_graph/nodes.py` | 노드 함수 + 조건부 라우팅 (interrupt/resume 패턴) |
 | `ai/agent/order_graph/graph.py` | build_order_graph(checkpointer) |
@@ -73,17 +70,19 @@ OpenAIAgentClient (PRIMARY_LLM_*)
 ### 보안 규칙
 
 `refuse_request` 도구 — 타인 정보·내부 정보·서비스 범위 외 질문·탈옥·부적절 콘텐츠를 필터링합니다.
-도구가 `__REFUSED__\n사유: <코드>` 마커를 반환하면, 출력 LLM이 사유에 맞는 정중한 거절 메시지를 생성합니다.
+도구가 `__REFUSED__\n사유: <코드>` 마커를 반환하면, executor.py가 이를 감지해 `ai/agent/responses.py`의 `REFUSED` 상수를 즉시 반환합니다 (LLM 재호출 없음).
 reason 코드: `other_user_info` | `internal_info` | `out_of_scope` | `jailbreak` | `inappropriate`
 
 `RequestContext.to_system_suffix()`는 로그인 여부(`로그인` / `비로그인`)만 LLM에 전달합니다. 실제 `user_id` 숫자는 시스템 프롬프트에 포함하지 않습니다 — LLM이 응답에서 내부 ID를 노출하는 것을 방지합니다.
 
 `get_order_status` 호출 시 LLM이 `user_id`를 인자로 넘기면 **타인 정보 조회 시도**로 간주하고 즉시 거절합니다.
-`get_order_status` 스키마에 `user_id` 파라미터가 없으므로, LLM이 이를 명시한다는 것은 사용자가 특정 user_id를 요청한 신호입니다.
+`GetOrderStatusInput` 스키마에 `user_id` 파라미터가 없으므로, LLM이 이를 명시한다는 것은 사용자가 특정 user_id를 요청한 신호입니다.
 ```python
-if "user_id" in args:
-    return self._tool_refuse_request("other_user_info")   # 코드 레벨 차단
-return await self._tool_get_order_status(db, user_id, **args)  # 서버 세션 user_id 사용
+# executor.py — _run_loop 내부
+if tc["name"] == "get_order_status" and "user_id" in tc.get("args", {}):
+    result = "__REFUSED__\n사유: other_user_info"   # 코드 레벨 차단
+else:
+    result, latency_ms = await _invoke_tool(tc, tool_map)  # 클로저 내 user_id 사용
 ```
 
 ### 히스토리 역할 매핑
@@ -103,15 +102,24 @@ _ROLE_MAP = {"user": "user", "assistant": "assistant", "bot": "assistant"}
 2. **정책 인용 원칙** — `[doc > 조]` 형식 출처 태그가 있으면 `(근거: ...)` 형식으로 반드시 인용
 3. **내부 용어 노출 금지** — 도구 이름(`search_policy`, `get_order_status` 등), 필드명(`order_item_id`, `user_id`)을 고객 응답에 포함하면 안 됨
 
-### RAG 임계값 (ko-sroberta-multitask 기준)
+### RAG 임계값
 
-| 도구 | 컬렉션 | `distance_threshold` |
-|------|--------|---------------------|
-| `search_policy` | 정책 6종 | **0.65** (실측 0.51~0.62) |
-| `search_faq` | `faq` | 0.45 |
-| `search_storage_guide` | `storage_guide` | 0.40~0.45 |
+**현재 모델: `BAAI/bge-m3`** / 청킹: 제N조 단위 (`chunk_by_articles`)
 
-임베딩 모델 변경 시 반드시 재측정 → `/rag-diagnostic` 스킬 참고.
+**문서 파싱**: `parse_document()` — 확장자 기반 라우팅
+- `.pdf` → `parse_pdf()`: pymupdf `find_tables()`(표→파이프 테이블) + `get_text("blocks")`(Y축 정렬) → `_apply_heading_markdown()`(제N장→##, 제N조→###) → `chunk_by_articles()`
+- `.docx` → `parse_docx()`: python-docx Heading→`#`, Bold run→`**`, 표→파이프 테이블 → `chunk_by_articles()`
+
+| 도구 | 컬렉션 | Settings 필드 | 기본값 | bge-m3 실측 거리 |
+|------|--------|--------------|--------|----------------|
+| `search_policy` | 정책 6종 | `rag_distance_threshold` | **0.50** | 관련 청크 0.24~0.45 |
+| `search_faq` | `faq` | `rag_distance_threshold` | **0.50** | 관련 청크 0.24~0.42 |
+| `search_farm_info` | `farm_intro` | `rag_distance_threshold` | **0.50** | — |
+| `search_storage_guide` | `storage_guide` | `rag_storage_distance_threshold` | 0.35 | 유사 항목 0.39~0.41 |
+| `search_storage_guide` (재시도) | `storage_guide` | `rag_storage_retry_threshold` | 0.40 | — |
+
+임계값은 `app/core/config.py`의 `Settings` 클래스에서 관리하고 `.env`로 오버라이드합니다.  
+임베딩 모델 변경 시 반드시 re-seed + 재측정 → `/rag-diagnostic` 스킬 참고.
 
 ### TraceStep
 
@@ -139,6 +147,10 @@ _ROLE_MAP = {"user": "user", "assistant": "assistant", "bot": "assistant"}
 | `AGENT_MAX_ITERATIONS` | 에이전트 최대 반복 횟수 (기본: `10`) |
 | `ANNIVERSARY_API_KEY` | 공공데이터포털 공휴일 API 키 |
 | `POLICY_DOCS_DIR` | 정책 문서 폴더 (기본: `ai/docs/`, gitignore — 로컬 배치 필요) |
+| `RERANKER_MODEL` | Cross-Encoder 재랭킹 모델 (기본: `dragonkue/bge-reranker-v2-m3-ko`) — 비워두면 재랭킹 비활성화 |
+| `LANGCHAIN_TRACING_V2` | LangSmith 트레이싱 활성화 (`true` / `false`, 기본: `false`) |
+| `LANGCHAIN_API_KEY` | LangSmith API 키 — `smith.langchain.com`에서 발급 |
+| `LANGCHAIN_PROJECT` | LangSmith 프로젝트명 (기본: `farmos-chatbot`) |
 
 Provider 전환은 `PRIMARY_LLM_*` 세 값만 교체하면 됩니다. 자세한 예시는 `ai/agent/clients/README.md` 참고.
 
@@ -184,3 +196,5 @@ curl -X POST "http://localhost:4000/api/chatbot/ask?debug=true" \
 | `/chatbot-agent` 스킬 | 챗봇 에이전트 전체 기획 문서 |
 | `/rag-diagnostic` 스킬 | RAG 검색 이상 시 진단 절차 (컬렉션 확인·거리 측정·재시딩) |
 | `/agent-pipeline-test` 스킬 | 서버 없이 에이전트 파이프라인 전체 검증 (도구 선택·인용·내부 용어) |
+| `/agent-rag-health-review` 스킬 | 에이전트+RAG 체계적 헬스 리뷰 — N+1 쿼리, TypedDict 누락, 라우팅 오탐, 컬렉션 미시딩, 임계값 하드코딩 점검 |
+| `/check-fe-be-sync` 스킬 | 백엔드 ORDER_PROMPTS 마커·Supervisor 라우팅 ↔ 프론트 parseOrderFlowMessage 버튼 동기화 점검 |

@@ -21,6 +21,27 @@ function makeOrderBlock(num: number, orderId: number, product: string, date: str
   return `${num}) 주문 번호 #${orderId}\n· 상품: ${product}\n· 주문일: ${date}`;
 }
 
+// ── cs-handoff ───────────────────────────────────────────────────────────────
+
+describe('cs-handoff', () => {
+  it('CS 핸드오프 메시지를 cs-handoff 로 파싱한다', () => {
+    // ANCHOR: cs/prompts.py CS_OUTPUT_PROMPT — "교환과 반품·환불 중 원하시는 처리 방법"
+    const text =
+      '불편을 드려서 정말 죄송합니다.\n\n' +
+      '교환과 반품·환불 중 원하시는 처리 방법을 알려주세요.\n\n' +
+      '1. 교환 — 동일 상품으로 교체\n' +
+      '2. 반품·환불 — 반품 후 환불 처리';
+    expect(parseOrderFlowMessage(text)).toEqual({ type: 'cs-handoff' });
+  });
+
+  it('cs-handoff 가 다른 패턴보다 우선한다', () => {
+    // cs-handoff 메시지에 "(네 / 아니오)" 가 혼재하더라도 cs-handoff 가 먼저 매칭
+    const text =
+      '교환과 반품·환불 중 원하시는 처리 방법을 알려주세요.\n진행하시겠습니까? (네 / 아니오)';
+    expect(parseOrderFlowMessage(text)).toEqual({ type: 'cs-handoff' });
+  });
+});
+
 // ── confirm ──────────────────────────────────────────────────────────────────
 
 describe('confirm', () => {
@@ -43,6 +64,14 @@ describe('confirm', () => {
       '교환 상품: 딸기 2kg × 1\n' +
       '교환 사유: 상품 불량\n\n' +
       '진행하시겠습니까? (네 / 아니오)';
+    expect(parseOrderFlowMessage(text)).toEqual({ type: 'confirm' });
+  });
+
+  it('duplicate_ticket 중복 안내를 confirm 으로 파싱한다', () => {
+    // ANCHOR: order_graph/prompts.py duplicate_ticket — "(네 / 아니오)"
+    const text =
+      '이미 동일한 교환 접수 티켓(#42)이 처리 대기 중입니다.\n' +
+      '이전에 접수하신 내용을 새로 입력하신 내용으로 수정하시겠습니까? (네 / 아니오)';
     expect(parseOrderFlowMessage(text)).toEqual({ type: 'confirm' });
   });
 
@@ -271,6 +300,23 @@ describe('null 반환 (인터랙티브 UI 없음)', () => {
       '현재 취소 가능한 주문이 없습니다.\n' +
       '취소는 배송사 픽업 전(결제 완료·배송 준비 중) 단계에서만 가능합니다.\n' +
       '이미 배송이 시작된 경우 수령 후 교환·반품으로 접수해 주세요.';
+    expect(parseOrderFlowMessage(text)).toBeNull();
+  });
+
+  it('ticket_modified 수정 완료 메시지 → null', () => {
+    const text =
+      '접수 내용이 수정되었습니다.\n\n' +
+      '티켓 번호: **#42**\n' +
+      '처리 현황은 마이페이지에서 확인하실 수 있습니다.\n' +
+      '추가 문의 사항이 있으시면 언제든지 말씀해 주세요.';
+    expect(parseOrderFlowMessage(text)).toBeNull();
+  });
+
+  it('ticket_unchanged 유지 메시지 → null', () => {
+    const text =
+      '기존 접수 내용(#42)이 유지됩니다.\n' +
+      '처리 현황은 마이페이지에서 확인하실 수 있습니다.\n' +
+      '추가 문의 사항이 있으시면 언제든지 말씀해 주세요.';
     expect(parseOrderFlowMessage(text)).toBeNull();
   });
 

@@ -55,16 +55,23 @@ class OrderState(TypedDict):
     selected_items: list         # 교환 품목 [{item_id, product_id, name, qty}]
     reason: str | None
     refund_method: str | None    # 취소 플로우만
+    stock_note: str              # check_stock → show_summary 재고 부족 안내 메시지
 
     # 제어 플래그
-    confirmed: bool | None   # None=미결, True=승인, False=거부
-    abort: bool              # True → handle_flow_cancel로 즉시 분기
-    is_pending: bool         # True=interrupt 대기 / False=플로우 종료
+    confirmed: bool | None      # None=미결, True=승인, False=거부
+    abort: bool                  # True → handle_flow_cancel로 즉시 분기
+    confirmation_attempts: int   # show_summary 재진입 횟수 — 3회 초과 시 강제 탈출
+    is_pending: bool             # True=interrupt 대기 / False=플로우 종료
 
     # 결과
     ticket_id: int | None
     response: str            # 터미널 노드(create_ticket, handle_flow_cancel)가 채우는 최종 메시지
 ```
+
+> **`stock_note`**: `check_stock` 노드가 채우고, `show_summary` 노드가 사용자에게 표시.  
+> 교환 불가 수준의 재고 부족이어도 플로우는 계속 진행하고 접수 가능 여부는 오피스에서 최종 확인합니다.
+>
+> **`confirmation_attempts`**: `show_summary`가 재진입할 때마다 1씩 증가. `_MAX_CONFIRMATION_ATTEMPTS = 3`을 초과하면 `abort=True`로 강제 탈출합니다. 사용자가 모호한 응답을 반복할 때 무한 루프를 방지합니다.
 
 ---
 
@@ -106,7 +113,7 @@ START
 | `route_action` | ✗ | 취소/교환 분기용 passthrough |
 | `list_orders` | ✓ | DB: 최근 5개 주문 조회 → 주문 선택 대기 |
 | `select_items` | ✓ | DB: 주문 품목 조회 → 교환 품목 선택 대기 (교환 전용) |
-| `check_stock` | ✗ | DB: 재고 확인 + 부족 시 안내 노트 기록 (교환 전용) |
+| `check_stock` | ✗ | DB: 재고 일괄 조회(IN 쿼리) + 부족 시 `stock_note` 기록 (교환 전용) |
 | `get_reason` | ✓ | 취소/교환 사유 선택 대기 |
 | `get_refund_method` | ✓ | 환불 방법 선택 대기 (취소 전용) |
 | `show_summary` | ✓ | 수집 정보 요약 + 최종 승인 대기 → `confirmed` 설정 |
@@ -234,6 +241,82 @@ else:                   new_status = "registered"
 ```
 
 `delivered` 상태는 절대 자동으로 전환되지 않습니다 — 관리자 직접 처리 필요.
+
+---
+
+## N+1 쿼리 방지 — `_build_order_summaries` 패턴
+
+### 문제
+
+LangGraph 노드에서 주문 목록을 표시할 때 N개 주문 × 3번 쿼리(Order, OrderItem, Product)가 발생할 수 있습니다.
+
+```python
+# ❌ 나쁜 패턴 — 주문마다 DB 왕복
+for order in orders:
+    items = db.query(OrderItem).filter_by(order_id=order.id).all()
+    for item in items:
+        product = db.query(Product).filter_by(id=item.product_id).first()
+```
+
+### 해결: 일괄 IN 쿼리
+
+```python
+def _build_order_summaries(db, orders: list) -> dict[int, str]:
+    """N개 주문의 표시 문자열을 2번의 IN 쿼리로 생성."""
+    order_ids = [o.id for o in orders]
+
+    # 1번째 쿼리 — 모든 주문의 품목을 한 번에
+    all_items = db.query(OrderItem).filter(OrderItem.order_id.in_(order_ids)).all()
+    items_by_order: dict[int, list] = {oid: [] for oid in order_ids}
+    product_ids: set[int] = set()
+    for item in all_items:
+        items_by_order[item.order_id].append(item)
+        product_ids.add(item.product_id)
+
+    # 2번째 쿼리 — 관련 상품명을 한 번에 (품목이 없으면 생략)
+    products: dict[int, str] = {}
+    if product_ids:
+        for p in db.query(Product).filter(Product.id.in_(product_ids)).all():
+            products[p.id] = p.name
+
+    summaries: dict[int, str] = {}
+    for order in orders:
+        names = [products.get(i.product_id, "상품") for i in items_by_order[order.id]]
+        label = ", ".join(names[:2]) + ("…" if len(names) > 2 else "")
+        summaries[order.id] = f"주문 #{order.id} — {label} ({order.created_at:%Y-%m-%d})"
+    return summaries
+```
+
+이 패턴은 `list_orders`, `select_items`, `check_stock`, `_parse_item_selections` 노드에 동일하게 적용됩니다.
+
+### interrupt/resume과 멱등성
+
+노드가 두 번 실행되는 특성상 IN 쿼리도 두 번 실행됩니다.  
+읽기 전용 쿼리는 멱등이므로 안전합니다 — `interrupt()` 이전의 DB 읽기는 반복 실행해도 결과가 동일합니다.
+
+---
+
+## create_ticket 멱등성 (중복 티켓 방지)
+
+`show_summary` 확인 후 네트워크 재시도 등으로 `create_ticket`이 두 번 호출될 수 있습니다.  
+기존 티켓이 있으면 INSERT 없이 재사용합니다.
+
+```python
+async def create_ticket(state: OrderState, config: RunnableConfig) -> dict:
+    db = _get_db(config)
+    # 이미 생성된 티켓 확인 (idempotency)
+    existing = (
+        db.query(ShopTicket)
+        .filter_by(order_id=state["order_id"], user_id=state["user_id"],
+                   action_type=state["action"], status="received")
+        .order_by(ShopTicket.created_at.desc())
+        .first()
+    )
+    if existing:
+        return {"ticket_id": existing.id, "response": f"티켓 #{existing.id}가 이미 접수되었습니다.", ...}
+    # 없으면 신규 INSERT
+    ...
+```
 
 ---
 
